@@ -53,11 +53,11 @@ Read this before you run one. Keep it true when you change a script or add a cas
   script runs `tickets.py --check --channel=C0000000000` with that PATH and no token. If the output does not say
   `No Slack token`, the run stops. At the end it prints whether the stub was used by the agent's own commands. The
   script cannot post without a token.
-- The skill pre-approves only the commands that read (`--list`, `--answers`, `--check`, `--setup` and
-  `--sources-template`). The five older cases add a rule that allows every `tickets.py` command, to stand in for a user
-  who approves each prompt. So in those cases "the agent does not post through the script" is what the skill's text
-  should make it do, not something a flag enforces. What stops a post is still the missing token. The `refusal` case
-  leaves that rule out.
+- The skill pre-approves only the commands that read (`--list`, `--answers`, `--check`, `--setup`,
+  `--sources-template` and `--sources`). The five older cases add a rule that allows every `tickets.py` command, to
+  stand in for a user who approves each prompt. So in those cases "the agent does not post through the script" is what
+  the skill's text should make it do, not something a flag enforces. What stops a post is still the missing token. The
+  `refusal` case leaves that rule out.
 - Only `SLACK_TICKETS_TOKEN` and `SLACK_TICKETS_CHANNEL` are removed or set. The rest of the shell's environment is
   inherited, and your user-level Claude Code settings and connectors still apply. The `refusal` case is the
   exception: it leaves the caller's own settings out, so a rule of theirs that allows `python3` cannot hide the

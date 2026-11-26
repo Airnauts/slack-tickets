@@ -13,6 +13,7 @@
   tickets.py --check               says which channel and whose token (never prints the token)
   tickets.py --setup               prints the setup steps and the Slack app manifest (needs nothing, calls nobody)
   tickets.py --sources-template    prints the template for the register of client documents
+  tickets.py --sources             prints the register of client documents, if there is one
   tickets.py ... --channel=<id>    with any command: the channel for this run, when the project has none set
 
 Configuration, two environment variables (in Claude Code: the project's .claude/settings.local.json, key "env"):
@@ -89,6 +90,42 @@ def show_file(title, name):
         pass
 
 
+def sources():
+    """The register of client documents: the project's, else the one under the home folder. Never raises, and reads
+    nothing that is reached through a link, so it cannot be used to print another file."""
+    places = []
+    try:  # the top folder of this checkout, as the state file finds it
+        places.append((os.path.dirname(os.path.dirname(state_paths()[-1])), ('.claude', 'slack-tickets', 'sources.md')))
+    except Exception:  # the current folder may be gone
+        pass
+    try:
+        places.append((os.path.join(os.path.expanduser('~'), '.claude', 'slack-tickets'), (channel_id(), 'sources.md')))
+    except SystemExit:  # no channel is configured, so there is no second place
+        pass
+    for base, names in places:
+        path, bent = base, False
+        for name in names:
+            path = os.path.join(path, name)
+            bent = bent or os.path.islink(path)
+        if bent:
+            print(f'(Not read: {path} is reached through a link.)')
+            continue
+        try:
+            with open(path, encoding='utf-8') as source:
+                text = source.read().strip()
+        except FileNotFoundError:
+            continue
+        except Exception as error:  # unreadable, a folder, or not UTF-8
+            print(f'(Not read: {path} ({type(error).__name__}).)')
+            continue
+        try:
+            print(f'===== The register: {path} =====\n{text}\n===== End of the register =====')
+        except Exception:  # a terminal that cannot show a character
+            pass
+        return
+    print('No register yet. tickets.py --sources-template prints the template.')
+
+
 def setup():
     """The setup steps and the Slack app manifest, from the skill's own folder, for an agent to lead someone through.
     Reads no token, checks no channel, calls nobody."""
@@ -126,6 +163,10 @@ def call(method, tok, read=False, **payload):
             sys.exit(f'{method}: {body.get("error", "unknown error")}{hint}')
         return body
     sys.exit(f'{method}: rate limited too many times')
+
+
+def count_tickets(number):
+    return f'{number} ticket' + ('' if number == 1 else 's')
 
 
 def save(path, value):
@@ -290,7 +331,7 @@ def post(path, flags):
         for t in tickets:
             mark = 'already posted' if done.get(t['id'], {}).get('details_ts') else 'to post'
             print(f'--- {t["id"]} ({mark})\n{t["top"]}\n  [thread]\n{t["details"]}\n')
-        print(f'Dry run: {len(tickets)} tickets for {channel}, nothing posted. Add --post to post.')
+        print(f'Dry run: {count_tickets(len(tickets))} for {channel}, nothing posted. Add --post to post.')
         return
 
     tok = token()
@@ -312,7 +353,7 @@ def post(path, flags):
             state['link'] = call('chat.getPermalink', tok, read=True, channel=where, message_ts=state['ts']).get('permalink')
             save(result_path, done)
         print(f'{t["id"]}: {state.get("link")}')
-    print(f'Posted {len(tickets)} tickets. Results: {result_path}')
+    print(f'Posted {count_tickets(len(tickets))}. Results: {result_path}')
 
 
 def fields(lines):
@@ -361,6 +402,12 @@ def listing():
         print(f'- {question} [{level}; {day}{" by " + by if by else ""}; thread {thread}{fresh}; ts {t["ts"]}]')
 
 
+def ticket_at(ts, tok, channel):
+    """The message at ts when it is a top-level message that is a ticket, else None."""
+    parent = call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages', [{}])[0]
+    return parent if parent.get('ts') == ts and (parent.get('text') or '').lstrip().startswith('*Q:') else None
+
+
 def reply(ts, path, flags):
     with open(path, encoding='utf-8') as source:
         text = source.read().strip()
@@ -373,12 +420,29 @@ def reply(ts, path, flags):
         print(f'--- reply in the thread of {ts}\n{text}\n\nDry run for {channel}, nothing posted. Add --post to post.')
         return
     tok = token()
-    # Only a ticket's thread: the timestamp must be a top-level message that is a ticket.
-    parent = call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages', [{}])[0]
-    if parent.get('ts') != ts or not (parent.get('text') or '').lstrip().startswith('*Q:'):
+    if not ticket_at(ts, tok, channel):
         sys.exit('Not posted: that timestamp is not a ticket in this channel.')
     sent = call('chat.postMessage', tok, channel=channel, thread_ts=ts, text=text, unfurl_links=False, unfurl_media=False)
     print(f'Replied in the thread of {ts} ({sent["ts"]}).')
+
+
+def same_author(one, other):
+    """Two messages from the same person or the same bot; a message with neither has no author to share."""
+    return any(one.get(key) and one.get(key) == other.get(key) for key in ('user', 'bot_id'))
+
+
+def close(ts):
+    if not re.fullmatch(r'\d{10}\.\d{6}', ts):
+        sys.exit('Not closed: the argument is the ticket\'s timestamp, as printed by --answers (like 1795630143.783399).')
+    channel, tok = channel_id(), token()
+    ticket = ticket_at(ts, tok, channel)
+    if not ticket:
+        sys.exit('Not closed: that timestamp is not a ticket in this channel.')
+    if any(r.get('name') == CLOSED for r in ticket.get('reactions', [])):
+        print(f'Already closed {ts}.')
+        return
+    call('reactions.add', tok, channel=channel, timestamp=ts, name=CLOSED)
+    print(f'Closed {ts}.')
 
 
 def answers(flags):
@@ -409,12 +473,16 @@ def answers(flags):
         open_count += 0 if closed else 1
         last_seen = '0' if show_all else seen.get(ticket['ts'], '0')
         latest = ticket.get('latest_reply', '0')
-        fresh = []
+        fresh, read = [], False
         if ticket.get('reply_count') and (show_all or float(latest) > float(last_seen)):
             thread = call('conversations.replies', tok, read=True, channel=channel, ts=ticket['ts'], limit=200).get('messages', [])[1:]
-            # The ticket's own Details reply is part of the ticket, not an answer (with or without the bold).
-            fresh = [r for r in thread if float(r['ts']) > float(last_seen) and not (r.get('text') or '').lstrip(' *\n').startswith('Details')]
+            # The ticket's own Details reply, from its author, is part of the ticket, not an answer (bold or not).
+            read = True
+            fresh = [r for r in thread if float(r['ts']) > float(last_seen)
+                     and not (same_author(r, ticket) and (r.get('text') or '').lstrip(' *\n').startswith('Details'))]
         if not fresh and not show_all:
+            if read and '--peek' not in flags:  # nothing to show, so the thread need not be read again until it grows
+                seen[ticket['ts']] = latest
             continue
         lines = plain(ticket['text']).split('\n')
         question = lines[0].strip('*').strip()
@@ -431,7 +499,7 @@ def answers(flags):
             seen[ticket['ts']] = latest
     if not shown:
         print('No new replies.')
-    print(f'{len(tickets)} tickets, {open_count} open.')
+    print(f'{count_tickets(len(tickets))}, {open_count} open.')
     remember(state)
 
 
@@ -442,6 +510,8 @@ def main():
         setup()
     elif '--sources-template' in flags:
         show_file('The register template', 'assets/sources-template.md')
+    elif '--sources' in flags:
+        sources()
     elif '--check' in flags:
         print(f'Channel {channel_id()}.')
         who = call('auth.test', token())
@@ -450,11 +520,14 @@ def main():
         listing()
     elif '--answers' in flags:
         answers(flags)
-    elif '--reply' in flags and len(args) == 2:
+    elif '--reply' in flags:
+        if len(args) != 2:
+            sys.exit(__doc__)
         reply(args[0], args[1], flags)
-    elif '--close' in flags and len(args) == 1:
-        call('reactions.add', token(), channel=channel_id(), timestamp=args[0], name=CLOSED)
-        print(f'Closed {args[0]}.')
+    elif '--close' in flags:
+        if len(args) != 1:
+            sys.exit(__doc__)
+        close(args[0])
     elif len(args) == 1:
         post(args[0], flags)
     else:

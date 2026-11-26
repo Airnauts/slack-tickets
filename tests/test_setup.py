@@ -9,12 +9,13 @@ import sys
 import tempfile
 import unittest
 
-from helpers import CHANNEL, ROOT, TicketsTestCase, run_cli
+from helpers import CHANNEL, OTHER_CHANNEL, ROOT, SCRIPT, TicketsTestCase, run_cli
 
 SKILL = os.path.join(ROOT, 'skills', 'ticket')
 STEPS = ('The setup steps', 'references/setup.md')
 MANIFEST = ('The Slack app manifest', 'assets/slack-app-manifest.yaml')
 TEMPLATE = ('The register template', 'assets/sources-template.md')
+NO_REGISTER = 'No register yet. tickets.py --sources-template prints the template.'
 NO_TOKEN = 'No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain under "slack-tickets". tickets.py --setup prints the steps.'
 
 
@@ -97,6 +98,107 @@ class SetupTests(TicketsTestCase):
             self.assertEqual(section(out, title, name), read(SKILL, name).strip())
 
 
+class SourcesTests(TicketsTestCase):
+    """--sources, with a scratch project as the current folder and a scratch folder as HOME."""
+
+    def setUp(self):
+        super().setUp()
+        self.project = os.path.join(self.tmp, 'project')
+        self.home = os.path.join(self.tmp, 'home')
+        for folder in (self.project, self.home, os.path.join(self.tmp, 'bin')):
+            os.makedirs(folder)
+
+    def sources(self, channel=CHANNEL):
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('SLACK_TICKETS_', 'GIT_'))}
+        env.update(PATH=os.path.join(self.tmp, 'bin'), HOME=self.home)
+        if channel:
+            env['SLACK_TICKETS_CHANNEL'] = channel
+        done = subprocess.run([sys.executable, SCRIPT, '--sources'], env=env, cwd=self.project, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return done.stdout + done.stderr
+
+    def project_register(self, text='Project rows'):
+        return self.write('project/.claude/slack-tickets/sources.md', text)
+
+    def home_register(self, text='Home rows', channel=CHANNEL):
+        return self.write(f'home/.claude/slack-tickets/{channel}/sources.md', text)
+
+    def test_the_projects_register_is_printed(self):
+        path = self.project_register('Project rows\n')
+        self.home_register()
+        self.assertEqual(self.sources(), f'===== The register: {path} =====\nProject rows\n===== End of the register =====\n')
+
+    def test_the_home_register_is_printed_when_the_project_has_none(self):
+        path = self.home_register()
+        self.assertEqual(self.sources(), f'===== The register: {path} =====\nHome rows\n===== End of the register =====\n')
+
+    def test_the_home_register_of_another_channel_is_not_printed(self):
+        self.home_register(channel=OTHER_CHANNEL)
+        self.assertEqual(self.sources(), NO_REGISTER + '\n')
+
+    def test_without_a_register_the_template_command_is_named(self):
+        self.assertEqual(self.sources(), NO_REGISTER + '\n')
+
+    def test_the_projects_register_is_printed_without_a_channel(self):
+        path = self.project_register()
+        self.home_register()
+        self.assertIn(f'===== The register: {path} =====\nProject rows\n', self.sources(channel=None))
+
+    def test_without_a_channel_or_a_register_it_still_exits_zero(self):
+        self.assertEqual(self.sources(channel=None), NO_REGISTER + '\n')
+
+    def test_a_register_that_is_a_link_is_not_read(self):
+        other = self.write('other.txt', 'SECRET TEXT')
+        elsewhere = os.path.dirname(self.write('elsewhere/slack-tickets/sources.md', 'SECRET TEXT'))
+        kinds = {
+            'sources.md in the project': (other, 'project/.claude/slack-tickets/sources.md'),
+            "the project's .claude folder": (os.path.dirname(elsewhere), 'project/.claude'),
+            "the project's slack-tickets folder": (elsewhere, 'project/.claude/slack-tickets'),
+            'sources.md in the home folder': (other, f'home/.claude/slack-tickets/{CHANNEL}/sources.md'),
+            'the channel folder in the home folder': (elsewhere, f'home/.claude/slack-tickets/{CHANNEL}'),
+        }
+        for why, (target, name) in kinds.items():
+            with self.subTest(why=why):
+                shutil.rmtree(self.project)
+                shutil.rmtree(self.home)
+                os.makedirs(self.project)
+                os.makedirs(self.home)
+                self.link(target, name)
+                out = self.sources()
+                self.assertNotIn('SECRET TEXT', out)
+                self.assertNotIn('The register:', out)
+                self.assertRegex(out, r'\(Not read: .* is reached through a link\.\)')
+                self.assertTrue(out.endswith(NO_REGISTER + '\n'), out)
+
+    def test_a_link_in_the_project_does_not_hide_the_home_register(self):
+        self.link(self.write('other.txt', 'SECRET TEXT'), 'project/.claude/slack-tickets/sources.md')
+        path = self.home_register()
+        out = self.sources()
+        self.assertIn('(Not read: ', out)
+        self.assertIn(f'===== The register: {path} =====\nHome rows\n', out)
+        self.assertNotIn('SECRET TEXT', out)
+
+    def test_a_linked_claude_folder_in_the_home_folder_is_fine(self):
+        real = os.path.join(self.tmp, 'real-claude', 'slack-tickets', CHANNEL)
+        os.makedirs(real)
+        with open(os.path.join(real, 'sources.md'), 'w', encoding='utf-8') as out:
+            out.write('Home rows')
+        self.link(os.path.join(self.tmp, 'real-claude'), 'home/.claude')
+        self.assertIn('Home rows', self.sources())
+
+    def test_a_register_that_cannot_be_read_is_said_and_exits_zero(self):
+        os.makedirs(os.path.join(self.project, '.claude', 'slack-tickets', 'sources.md'))
+        self.assertRegex(self.sources(), r'\(Not read: .*sources\.md \(IsADirectoryError\)\.\)')
+
+    def link(self, target, name):
+        path = os.path.join(self.tmp, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            os.symlink(target, path, target_is_directory=os.path.isdir(target))
+        except (OSError, NotImplementedError):
+            self.skipTest('symlinks are not available here')
+
+
 class SetupMessageTests(TicketsTestCase):
     def test_list_without_a_channel_still_exits_zero(self):
         code, out = run_cli(['--list'])
@@ -127,7 +229,7 @@ class SkillFileTests(unittest.TestCase):
         rules = re.findall(r'^  - (.*)$', head, re.M)  # allowed-tools is the frontmatter's only list
         prefix = 'Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py '
         commands = ['--list', '--answers', '--answers --all', '--answers --peek', '--check', '--setup',
-                    '--sources-template']
+                    '--sources-template', '--sources']
         self.assertEqual(sorted(rules), sorted(f'{prefix}{command})' for command in commands))
         loaded = re.search(r'^' + re.escape(chr(33) + chr(96)) + r'(.*)' + chr(96) + r'$', body, re.M)
         self.assertIsNotNone(loaded)
