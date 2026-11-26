@@ -32,6 +32,7 @@ import datetime
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -91,8 +92,8 @@ def show_file(title, name):
 
 
 def sources():
-    """The register of client documents: the project's, else the one under the home folder. Never raises, and reads
-    nothing that is reached through a link, so it cannot be used to print another file."""
+    """The register of client documents: the project's, else the one under the home folder. Never raises. Reads only
+    a plain file with one name and at most 1 MB, reached through no link, so it cannot print another file or stall."""
     places = []
     try:  # the top folder of this checkout, as the state file finds it
         places.append((os.path.dirname(os.path.dirname(state_paths()[-1])), ('.claude', 'slack-tickets', 'sources.md')))
@@ -110,16 +111,26 @@ def sources():
         if bent:
             print(f'(Not read: {path} is reached through a link.)')
             continue
-        try:
-            with open(path, encoding='utf-8') as source:
-                text = source.read().strip()
+        try:  # no following of a link and no waiting on a pipe; the checks and the read use one descriptor
+            fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+            with os.fdopen(fd, 'rb') as source:
+                info = os.fstat(fd)
+                refusal = ('not a plain file' if not stat.S_ISREG(info.st_mode)
+                           else 'it has more than one name' if info.st_nlink != 1
+                           else 'over 1 MB' if info.st_size > 1_000_000 else '')
+                text = '' if refusal else source.read(1_000_000).decode('utf-8')
         except FileNotFoundError:
             continue
-        except Exception as error:  # unreadable, a folder, or not UTF-8
+        except Exception as error:  # unreadable or not UTF-8
             print(f'(Not read: {path} ({type(error).__name__}).)')
             continue
+        if refusal:
+            print(f'(Not read: {path} ({refusal}).)')
+            continue
+        text = re.sub(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]', ' ', text).strip()  # nothing in it can pass for the frame
+        lines = text.count('\n') + 1
         try:
-            print(f'===== The register: {path} =====\n{text}\n===== End of the register =====')
+            print(f'===== The register: {path} ({lines} line{"" if lines == 1 else "s"}) =====\n{text}\n===== End of the register =====')
         except Exception:  # a terminal that cannot show a character
             pass
         return
@@ -405,7 +416,8 @@ def listing():
 def ticket_at(ts, tok, channel):
     """The message at ts when it is a top-level message that is a ticket, else None."""
     parent = call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages', [{}])[0]
-    return parent if parent.get('ts') == ts and (parent.get('text') or '').lstrip().startswith('*Q:') else None
+    top_level = parent.get('thread_ts', ts) == ts
+    return parent if parent.get('ts') == ts and top_level and (parent.get('text') or '').lstrip().startswith('*Q:') else None
 
 
 def reply(ts, path, flags):
@@ -414,7 +426,7 @@ def reply(ts, path, flags):
     if not text or '<@' in text or '<!' in text or len(text) > 3500:
         sys.exit('Not posted: a reply needs some text, mentions nobody and fits one message.')
     if not re.fullmatch(r'\d{10}\.\d{6}', ts):
-        sys.exit('Not posted: the first argument is the ticket\'s timestamp, as printed by --answers (like 1795630143.783399).')
+        sys.exit('Not posted: the first argument is the ticket\'s timestamp, as printed by --answers (like 1700000000.000100).')
     channel = channel_id()
     if '--post' not in flags:
         print(f'--- reply in the thread of {ts}\n{text}\n\nDry run for {channel}, nothing posted. Add --post to post.')
@@ -433,7 +445,7 @@ def same_author(one, other):
 
 def close(ts):
     if not re.fullmatch(r'\d{10}\.\d{6}', ts):
-        sys.exit('Not closed: the argument is the ticket\'s timestamp, as printed by --answers (like 1795630143.783399).')
+        sys.exit('Not closed: the argument is the ticket\'s timestamp, as printed by --answers (like 1700000000.000100).')
     channel, tok = channel_id(), token()
     ticket = ticket_at(ts, tok, channel)
     if not ticket:
@@ -475,13 +487,14 @@ def answers(flags):
         latest = ticket.get('latest_reply', '0')
         fresh, read = [], False
         if ticket.get('reply_count') and (show_all or float(latest) > float(last_seen)):
-            thread = call('conversations.replies', tok, read=True, channel=channel, ts=ticket['ts'], limit=200).get('messages', [])[1:]
+            response = call('conversations.replies', tok, read=True, channel=channel, ts=ticket['ts'], limit=200)
+            thread, more = response.get('messages', [])[1:], response.get('has_more')
             # The ticket's own Details reply, from its author, is part of the ticket, not an answer (bold or not).
             read = True
             fresh = [r for r in thread if float(r['ts']) > float(last_seen)
                      and not (same_author(r, ticket) and (r.get('text') or '').lstrip(' *\n').startswith('Details'))]
         if not fresh and not show_all:
-            if read and '--peek' not in flags:  # nothing to show, so the thread need not be read again until it grows
+            if read and not more and '--peek' not in flags:  # nothing to show, so the thread need not be read again until it grows
                 seen[ticket['ts']] = latest
             continue
         lines = plain(ticket['text']).split('\n')

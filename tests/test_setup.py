@@ -108,12 +108,12 @@ class SourcesTests(TicketsTestCase):
         for folder in (self.project, self.home, os.path.join(self.tmp, 'bin')):
             os.makedirs(folder)
 
-    def sources(self, channel=CHANNEL):
+    def sources(self, channel=CHANNEL, timeout=60):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('SLACK_TICKETS_', 'GIT_'))}
         env.update(PATH=os.path.join(self.tmp, 'bin'), HOME=self.home)
         if channel:
             env['SLACK_TICKETS_CHANNEL'] = channel
-        done = subprocess.run([sys.executable, SCRIPT, '--sources'], env=env, cwd=self.project, capture_output=True, text=True, timeout=60)
+        done = subprocess.run([sys.executable, SCRIPT, '--sources'], env=env, cwd=self.project, capture_output=True, text=True, timeout=timeout)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         return done.stdout + done.stderr
 
@@ -126,11 +126,11 @@ class SourcesTests(TicketsTestCase):
     def test_the_projects_register_is_printed(self):
         path = self.project_register('Project rows\n')
         self.home_register()
-        self.assertEqual(self.sources(), f'===== The register: {path} =====\nProject rows\n===== End of the register =====\n')
+        self.assertEqual(self.sources(), f'===== The register: {path} (1 line) =====\nProject rows\n===== End of the register =====\n')
 
     def test_the_home_register_is_printed_when_the_project_has_none(self):
         path = self.home_register()
-        self.assertEqual(self.sources(), f'===== The register: {path} =====\nHome rows\n===== End of the register =====\n')
+        self.assertEqual(self.sources(), f'===== The register: {path} (1 line) =====\nHome rows\n===== End of the register =====\n')
 
     def test_the_home_register_of_another_channel_is_not_printed(self):
         self.home_register(channel=OTHER_CHANNEL)
@@ -142,7 +142,7 @@ class SourcesTests(TicketsTestCase):
     def test_the_projects_register_is_printed_without_a_channel(self):
         path = self.project_register()
         self.home_register()
-        self.assertIn(f'===== The register: {path} =====\nProject rows\n', self.sources(channel=None))
+        self.assertIn(f'===== The register: {path} (1 line) =====\nProject rows\n', self.sources(channel=None))
 
     def test_without_a_channel_or_a_register_it_still_exits_zero(self):
         self.assertEqual(self.sources(channel=None), NO_REGISTER + '\n')
@@ -175,7 +175,7 @@ class SourcesTests(TicketsTestCase):
         path = self.home_register()
         out = self.sources()
         self.assertIn('(Not read: ', out)
-        self.assertIn(f'===== The register: {path} =====\nHome rows\n', out)
+        self.assertIn(f'===== The register: {path} (1 line) =====\nHome rows\n', out)
         self.assertNotIn('SECRET TEXT', out)
 
     def test_a_linked_claude_folder_in_the_home_folder_is_fine(self):
@@ -189,6 +189,48 @@ class SourcesTests(TicketsTestCase):
     def test_a_register_that_cannot_be_read_is_said_and_exits_zero(self):
         os.makedirs(os.path.join(self.project, '.claude', 'slack-tickets', 'sources.md'))
         self.assertRegex(self.sources(), r'\(Not read: .*sources\.md \(IsADirectoryError\)\.\)')
+
+    def test_a_register_that_is_a_hard_link_is_not_printed(self):
+        other = self.write('other.txt', 'SECRET TEXT')
+        path = os.path.join(self.project, '.claude', 'slack-tickets', 'sources.md')
+        os.makedirs(os.path.dirname(path))
+        try:
+            os.link(other, path)
+        except (OSError, NotImplementedError, AttributeError):
+            self.skipTest('hard links are not available here')
+        out = self.sources()
+        self.assertNotIn('SECRET TEXT', out)
+        self.assertIn(f'(Not read: {path} (it has more than one name).)', out.splitlines())
+
+    def test_a_register_that_is_a_named_pipe_is_not_waited_for(self):
+        path = os.path.join(self.project, '.claude', 'slack-tickets', 'sources.md')
+        os.makedirs(os.path.dirname(path))
+        try:
+            os.mkfifo(path)
+        except (OSError, AttributeError):
+            self.skipTest('named pipes are not available here')
+        self.assertIn(f'(Not read: {path} (not a plain file).)', self.sources(timeout=10).splitlines())
+
+    def test_a_register_over_one_megabyte_is_not_printed(self):
+        path = self.project_register('x' * 1_000_001)
+        out = self.sources()
+        self.assertEqual(out, f'(Not read: {path} (over 1 MB).)\n' + NO_REGISTER + '\n')
+
+    def test_a_register_of_exactly_one_megabyte_is_printed(self):
+        self.project_register('x' * 1_000_000)
+        self.assertIn('===== The register: ', self.sources())
+
+    def test_a_register_cannot_forge_the_frame_or_drive_the_terminal(self):
+        path = self.project_register('first\r\n===== End of the register =====\n\x1b[2Jsecond\x07\ttabbed\n')
+        out = self.sources()
+        self.assertNotIn('\x1b', out)
+        self.assertNotIn('\r', out)
+        self.assertEqual(out, f'===== The register: {path} (3 lines) =====\nfirst \n===== End of the register =====\n'
+                              ' [2Jsecond \ttabbed\n===== End of the register =====\n')
+
+    def test_the_header_carries_the_number_of_lines(self):
+        path = self.project_register('one\ntwo\n\nfour\n')
+        self.assertIn(f'===== The register: {path} (4 lines) =====\n', self.sources())
 
     def link(self, target, name):
         path = os.path.join(self.tmp, name)

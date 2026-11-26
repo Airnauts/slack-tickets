@@ -242,6 +242,16 @@ class AnswersTests(SlackTestCase):
         self.assertEqual(lines_of(self.answers()), ['No new replies.', '1 ticket, 1 open.'])
         self.assertEqual(self.slack.made('conversations.replies'), [])
 
+    def test_a_thread_cut_short_by_slack_is_read_again(self):
+        self.thread = self.thread[:2]
+        self.history(ticket(T1, reply_count=1, reply_users=[BOT], latest_reply='1700000100.000100'))
+        self.slack.respond('conversations.replies', lambda **payload: {'ok': True, 'messages': self.thread, 'has_more': True})
+        self.answers()
+        self.assertEqual(self.state()['seen'], {})
+        self.slack.calls.clear()
+        self.answers()
+        self.assertEqual(len(self.slack.made('conversations.replies')), 1)
+
     def test_peek_and_all_do_not_remember_a_ticket_with_only_its_details_reply(self):
         self.thread = self.thread[:2]
         self.history(ticket(T1, reply_count=1, reply_users=[BOT], latest_reply='1700000100.000100'))
@@ -365,6 +375,12 @@ class ReplyTests(SlackTestCase):
                 result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
                 self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
                 self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_a_reply_in_a_thread_is_refused_even_when_it_reads_like_a_ticket(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, thread_ts=T2)]})
+        result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
+        self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
+        self.assertEqual(self.slack.methods(), ['conversations.replies'])
 
     def test_a_reply_to_a_ticket_is_posted_in_its_thread(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1)]})
@@ -554,7 +570,7 @@ class MainTests(SlackTestCase):
         for ts in ('123', '1700000000', 'abc.def', '1700000000.000100x'):
             with self.subTest(ts=ts):
                 result = self.run_main('--close', ts)
-                self.assertEqual(result.code, "Not closed: the argument is the ticket's timestamp, as printed by --answers (like 1795630143.783399).")
+                self.assertEqual(result.code, "Not closed: the argument is the ticket's timestamp, as printed by --answers (like 1700000000.000100).")
                 self.assertEqual(self.slack.calls, [])
 
     def test_close_refuses_a_message_that_is_not_a_ticket(self):
@@ -569,6 +585,17 @@ class MainTests(SlackTestCase):
                 result = self.run_main('--close', T1)
                 self.assertEqual(result.code, 'Not closed: that timestamp is not a ticket in this channel.')
                 self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_close_refuses_a_reply_in_a_thread_even_when_it_reads_like_a_ticket(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, thread_ts=T2)]})
+        result = self.run_main('--close', T1)
+        self.assertEqual(result.code, 'Not closed: that timestamp is not a ticket in this channel.')
+        self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_close_accepts_a_ticket_that_is_its_own_thread_root(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, thread_ts=T1)]})
+        self.slack.respond('reactions.add', {'ok': True})
+        self.assertEqual(self.run_main('--close', T1).out, f'Closed {T1}.\n')
 
     def test_close_needs_the_channel(self):
         del os.environ['SLACK_TICKETS_CHANNEL']
