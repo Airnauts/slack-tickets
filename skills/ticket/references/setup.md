@@ -139,3 +139,7 @@ and run the check (step 6) in the new session.
 
 The script calls `slack.com`, so the agent's sandbox has to allow network access. Codex blocks it by default, and the
 script then says "Slack could not be reached". Where the agent can limit it, allow `slack.com` only.
+
+In a git worktree, an agent whose sandbox may not write to the main checkout keeps its own copy in its worktree, so a
+reply repeats once per worktree at most. To share it, add the main checkout's `.slack-tickets` folder to the folders
+the sandbox may write.

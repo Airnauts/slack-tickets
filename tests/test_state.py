@@ -115,6 +115,80 @@ class StatePathInRepositoryTests(StateTestCase):
         self.assertEqual(self.tickets.recall(), EMPTY)
 
 
+needs_permissions = unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0, 'root can write anywhere')
+
+
+@needs_git
+class WorktreeStateTests(StateTestCase):
+    """A sandboxed agent may not write to the main checkout: the worktree then keeps its own copy."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo, self.tree = os.path.join(self.tmp, 'repo'), os.path.join(self.tmp, 'tree')
+        os.makedirs(self.repo)
+        make_repo(self.repo)
+        git('worktree', 'add', '-q', self.tree, cwd=self.repo)
+
+    def put_in(self, folder, text):
+        os.makedirs(os.path.join(folder, '.slack-tickets'), exist_ok=True)
+        with open(self.state_file(folder), 'w', encoding='utf-8') as out:
+            out.write(text)
+
+    def make_main_read_only(self):
+        os.chmod(self.repo, 0o555)
+        self.addCleanup(os.chmod, self.repo, 0o755)
+
+    def test_one_place_in_the_main_checkout_two_in_a_worktree(self):
+        os.chdir(self.repo)
+        self.assertEqual([os.path.realpath(p) for p in self.tickets.state_paths()],
+                         [os.path.realpath(self.state_file(self.repo))])
+        os.chdir(self.tree)
+        self.assertEqual([os.path.realpath(p) for p in self.tickets.state_paths()],
+                         [os.path.realpath(self.state_file(self.repo)), os.path.realpath(self.state_file(self.tree))])
+
+    @needs_permissions
+    def test_a_main_checkout_that_cannot_be_written_leaves_the_state_in_the_worktree(self):
+        self.make_main_read_only()
+        os.chdir(self.tree)
+        out = self.remember_quietly({'seen': {'1.000001': '2.000002'}, 'names': {'U1': 'Ann'}})
+        self.assertIn('Remembered in this checkout only', out)
+        self.assertNotIn('could not be remembered', out)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tree, '.slack-tickets'))), ['.gitignore', 'state.json'])
+        status = subprocess.run(['git', 'status', '--porcelain'], cwd=self.tree, capture_output=True, text=True)
+        self.assertEqual(status.stdout, '')
+        self.assertEqual(self.tickets.recall()['seen'], {'1.000001': '2.000002'})
+        os.chdir(self.repo)
+        self.assertEqual(self.tickets.recall(), EMPTY)
+
+    def test_the_later_reply_wins_whichever_place_holds_it(self):
+        os.chdir(self.tree)
+        for main_last, tree_last in (('2.000002', '3.000003'), ('3.000003', '2.000002')):
+            with self.subTest(main=main_last):
+                self.put_in(self.repo, json.dumps({'seen': {'1.0': main_last}}))
+                self.put_in(self.tree, json.dumps({'seen': {'1.0': tree_last}}))
+                self.assertEqual(self.tickets.recall()['seen'], {'1.0': '3.000003'})
+
+    def test_a_broken_file_in_one_place_does_not_hide_the_other(self):
+        os.chdir(self.tree)
+        for broken, good in ((self.repo, self.tree), (self.tree, self.repo)):
+            with self.subTest(broken=broken):
+                self.put_in(broken, '{not json')
+                self.put_in(good, json.dumps({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}}))
+                self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}})
+
+    @needs_links
+    @needs_permissions
+    def test_a_link_in_place_of_the_worktrees_state_is_not_written_through(self):
+        self.make_main_read_only()
+        victim = self.write('victim.txt', 'keep me')
+        os.makedirs(os.path.join(self.tree, '.slack-tickets'))
+        os.symlink(victim, self.state_file(self.tree))
+        os.chdir(self.tree)
+        self.assertIn('could not be remembered', self.remember_quietly({'seen': {}, 'names': {}}))
+        with open(victim, encoding='utf-8') as source:
+            self.assertEqual(source.read(), 'keep me')
+
+
 @needs_git
 class InheritedGitVariablesTests(StateTestCase):
     """git exports GIT_DIR to a hook run from a linked worktree. The tests must not act on that repository."""

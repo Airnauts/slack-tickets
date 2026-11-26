@@ -142,17 +142,25 @@ def load(path):
         return {}
 
 
-def state_path():
-    """Where --answers remembers what it showed: .slack-tickets/state.json in the project the script is run from.
-    In a git worktree that is the main checkout, so every worktree shares one file."""
+def state_paths():
+    """Where the state may be kept: .slack-tickets/state.json in the main checkout, which every git worktree shares,
+    then the same file in the checkout the script is run from, for a sandbox that may not write outside it."""
     try:
-        found = subprocess.run(['git', 'rev-parse', '--git-common-dir'], capture_output=True, text=True)
-        common = os.path.abspath(found.stdout.strip()) if found.returncode == 0 and found.stdout.strip() else ''
+        found = subprocess.run(['git', 'rev-parse', '--git-common-dir', '--show-toplevel'], capture_output=True, text=True)
+        lines = found.stdout.split('\n') if found.returncode == 0 else []
     except OSError:  # no git on this machine
-        common = ''
+        lines = []
+    common = os.path.abspath(lines[0]) if lines and lines[0] else ''
+    own = os.path.abspath(lines[1]) if len(lines) > 1 and lines[1] else os.getcwd()
     # Only a plain .git folder names the project; a submodule or a bare repository does not.
-    root = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else os.getcwd()
-    return os.path.join(root, '.slack-tickets', 'state.json')
+    main = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else os.getcwd()
+    roots = [main] if os.path.realpath(own) == os.path.realpath(main) else [main, own]
+    return [os.path.join(root, '.slack-tickets', 'state.json') for root in roots]
+
+
+def state_path():
+    """The shared file: the first of state_paths()."""
+    return state_paths()[0]
 
 
 def linked(path):
@@ -168,35 +176,63 @@ def believable(last):
         return False
 
 
+def read_state(path):
+    """The believable part of one state file. Raises on a file that is oddly shaped or unreadable."""
+    state = {} if linked(path) else load(path)
+    seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
+    names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
+    return seen, names
+
+
 def recall():
-    """What --answers remembered, read as something a stranger could have put in the project.
+    """What --answers remembered, read as something a stranger could have put in the project, from every place
+    state_paths() names: the later timestamp per reply wins, the first name per user stays.
     A missing, unreadable, linked or oddly shaped file counts as nothing remembered. Never raises."""
+    seen, names = {}, {}
     try:
-        path = state_path()
-        state = {} if linked(path) else load(path)
-        seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
-        names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
-    except Exception:  # whatever the file holds, --list must still load with the skill
-        seen, names = {}, {}
+        paths = state_paths()
+    except Exception:  # whatever the surroundings are, --list must still load with the skill
+        paths = []
+    for path in paths:
+        try:
+            more_seen, more_names = read_state(path)
+        except Exception:  # one bad file must not hide the other
+            continue
+        for ts, last in more_seen.items():
+            if ts not in seen or float(last) > float(seen[ts]):
+                seen[ts] = last
+        for user, name in more_names.items():
+            names.setdefault(user, name)
     return {'names': names, 'seen': seen}
+
+
+def write_state(path, state):
+    folder = os.path.dirname(path)
+    if linked(path):
+        raise OSError(0, 'a link stands in its place')
+    os.makedirs(folder, exist_ok=True)
+    try:  # before the state, so the state is never in the project without it; 'x' does not follow a link
+        with open(os.path.join(folder, '.gitignore'), 'x', encoding='utf-8') as out:
+            out.write('*\n')
+    except FileExistsError:
+        pass
+    save(path, state)
 
 
 def remember(state):
     """Saves what was shown. A folder that cannot be written costs a repeat next time, not the answers just printed."""
-    path = state_path()
-    folder = os.path.dirname(path)
-    try:
-        if linked(path):
-            raise OSError(0, 'a link stands in its place')
-        os.makedirs(folder, exist_ok=True)
-        try:  # before the state, so the state is never in the project without it; 'x' does not follow a link
-            with open(os.path.join(folder, '.gitignore'), 'x', encoding='utf-8') as out:
-                out.write('*\n')
-        except FileExistsError:
-            pass
-        save(path, state)
-    except OSError as error:
-        print(f'What was shown could not be remembered ({path}: {error.strerror}). The same replies will show as new next time.')
+    paths = state_paths()
+    first_error = None
+    for path in paths:
+        try:
+            write_state(path, state)
+        except OSError as error:
+            first_error = first_error or error
+            continue
+        if path != paths[0]:
+            print(f'Remembered in this checkout only ({path}): the main checkout cannot be written from here.')
+        return
+    print(f'What was shown could not be remembered ({paths[0]}: {first_error.strerror}). The same replies will show as new next time.')
 
 
 def problems(tickets):

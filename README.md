@@ -97,6 +97,10 @@ all of them run without asking.
 It needs Python 3 and nothing else. It remembers which replies it has shown in `.slack-tickets/state.json` in the
 project, a folder it creates and keeps out of git. Git worktrees share the main checkout's file.
 
+An agent whose sandbox may not write to the main checkout keeps its own copy in its worktree, so a reply repeats once
+per worktree at most. To share it, add the main checkout's `.slack-tickets` folder to the folders the sandbox may
+write.
+
 ## Developing
 
 ```
