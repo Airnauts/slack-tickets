@@ -10,6 +10,17 @@ A ticket is one question to the client, posted in the project's tickets channel 
 questions: each top-level message is one question, and everything else about it lives in its thread. **Nobody is tagged
 in a ticket**: someone reviews each new ticket and tags the right person in its thread.
 
+## The channel right now
+
+Read from Slack when this skill loaded:
+
+!`python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py --list`
+
+Use this list to answer "what is open", to spot a duplicate before drafting, and to find a ticket's `ts`. It has
+no reply texts: for those run `tickets.py --answers`. It is a snapshot; run `tickets.py --list` again when a long
+session has posted or closed tickets since. If the lines above say the list could not be read, or that shell
+commands are disabled, do the setup check below before anything else.
+
 ## Setup check
 
 The script is `python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py`. It reads two environment variables, set under `env` in
@@ -18,8 +29,8 @@ the project's `.claude/settings.local.json`:
 - `SLACK_TICKETS_CHANNEL`: the channel's id.
 - `SLACK_TICKETS_TOKEN`: the Slack app's bot token. (Without it the script reads the macOS Keychain, service `slack-tickets`.)
 
-Run `tickets.py --check` first in a session. It names the channel and whose token it is. If it reports something
-missing, tell the user what, point them at the setup steps in `${CLAUDE_PLUGIN_ROOT}/README.md` and at the Slack app
+When the list above could not be read, run `tickets.py --check`. It names the channel and whose token it is. If it
+reports something missing, tell the user what, point them at the setup steps in `${CLAUDE_PLUGIN_ROOT}/README.md` and at the Slack app
 manifest, `${CLAUDE_PLUGIN_ROOT}/slack-app-manifest.yaml`, and stop: do not set a token up for them, do not ask
 them to paste one into the chat, and never print the environment (`env`, `printenv`, `echo $SLACK_TICKETS_TOKEN`).
 
@@ -28,7 +39,8 @@ them to paste one into the chat, and never print the environment (`env`, `printe
 **Never write anything into this skill's or the plugin's own folder.** It is an installed copy that every update
 replaces, and it is shared by every project. A project's data has two homes, and nothing else:
 
-- the tickets channel itself, which is the list of what was asked and answered (`tickets.py --answers --all`);
+- the tickets channel itself, which is the list of what was asked and answered (loaded at the top of this skill;
+  `tickets.py --answers --all` for the full threads);
 - the project's register of client documents, described under "When a contradiction is found".
 
 Do not keep a log of posted tickets anywhere: the channel is that log. Batch files and reply notes are scratch
@@ -132,9 +144,8 @@ An assumption of ours that the new material contradicts is asked the same way, w
 
 1. **Collect** the fields. Take what the conversation already holds; ask the user only for what is missing. The
    urgency is the user's to confirm when it was not stated.
-2. **Check for a duplicate.** Run `tickets.py --answers --all` (or `--peek` if a full list was already printed this
-   session) and read the open questions. If one already asks the same thing, propose a reply in its thread instead.
-   Check the register's list of open questions too, if it has one.
+2. **Check for a duplicate** against the list of open tickets at the top of this skill. If one already asks the same
+   thing, propose a reply in its thread instead. Check the register's held-back questions too, if it has one.
 3. **Write the batch** as a JSON file in a scratch folder (never in the plugin or the repo):
    `{"tickets": [{"id": "short-slug", "top": "...", "details": "..."}]}`.
 4. **Dry run**: `tickets.py <batch.json>` prints every ticket as it will be posted. Show that to the user.
@@ -175,8 +186,8 @@ thread**, so the client reads the current state there and nobody answers a quest
 - the user decided something in conversation that changes what we ask or what we will do;
 - a date in the ticket passed, or its urgency changed.
 
-Whenever such a decision is made in a session, check whether an open ticket is about it (`--answers --all` lists
-them) and propose the update without being asked. Write it as one short reply:
+Whenever such a decision is made in a session, check whether an open ticket is about it (the list at the top) and
+propose the update without being asked. Write it as one short reply:
 
 ```
 *Update* (<name>, <date>): <what we decided, in one or two plain sentences>.

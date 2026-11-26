@@ -3,6 +3,7 @@
 
   tickets.py batch.json            dry run: prints what would be posted, posts nothing
   tickets.py batch.json --post     posts; safe to run again, already posted tickets are skipped
+  tickets.py --list                one line per open ticket (the skill loads this when it starts; never fails)
   tickets.py --answers             replies that arrived since the last check, and how many tickets are open
   tickets.py --answers --all       every ticket with every reply
   tickets.py --answers --peek      as --answers, without remembering what was shown
@@ -75,6 +76,8 @@ def call(method, tok, read=False, **payload):
                 time.sleep(int(error.headers.get('Retry-After', '5')))
                 continue
             sys.exit(f'{method}: HTTP {error.code}')
+        except (urllib.error.URLError, TimeoutError, ValueError) as error:
+            sys.exit(f'{method}: Slack could not be reached ({type(error).__name__})')
         if not body.get('ok'):
             hint = ''
             if body.get('needed'):
@@ -157,6 +160,47 @@ def post(path, flags):
     print(f'Posted {len(tickets)} tickets. Results: {result_path}')
 
 
+def history(channel, tok):
+    messages, cursor = [], None
+    while True:
+        page = call('conversations.history', tok, read=True, channel=channel, limit=200, **({'cursor': cursor} if cursor else {}))
+        messages += page.get('messages', [])
+        cursor = page.get('response_metadata', {}).get('next_cursor')
+        if not cursor:
+            break
+    return sorted((m for m in messages if (m.get('text') or '').lstrip().startswith('*Q:')), key=lambda m: float(m['ts']))
+
+
+def listing():
+    """One line per open ticket, from one call to Slack. It is loaded into the skill's text, so it never exits with an error."""
+    try:
+        channel, tok = channel_id(), token()
+        tickets = history(channel, tok)
+    except SystemExit as stop:
+        print(f'The ticket list could not be read: {stop.code}')
+        return
+    except Exception as error:  # the skill's text loads this output; a crash here would stop the skill from loading
+        print(f'The ticket list could not be read: {type(error).__name__}')
+        return
+    seen = load(os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')).get('seen', {})
+    still_open = [t for t in tickets if not any(r.get('name') == CLOSED for r in t.get('reactions', []))]
+    print(f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:')
+    for t in still_open:
+        lines = re.sub(r'<[^>|]*\|([^>]*)>', r'\1', t.get('text') or '').split('\n')
+        parts = [part.strip() for line in lines[1:] for part in line.split('\u00b7')]
+        level = next((part[len('Urgency:'):].strip() for part in parts if part.startswith('Urgency:')), '?')
+        level = re.sub(r':[a-z_]+:', '', level).strip() or level
+        by = next((part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
+        day = datetime.datetime.fromtimestamp(float(t['ts'])).strftime('%b %d')
+        thread = t.get('reply_count', 0)
+        # The ticket's own Details reply comes from its author; anyone else in the thread is an answer or a routing tag.
+        others = [u for u in t.get('reply_users', []) if u != t.get('user')]
+        unread = bool(others) and float(t.get('latest_reply', '0')) > float(seen.get(t['ts'], '0'))
+        fresh = (', others replied' if others else ', no reply yet') + (', NEW since the last check' if unread else '')
+        question = lines[0].strip('* ').removeprefix('Q:').strip()
+        print(f'- {question} [{level}; {day}{" by " + by if by else ""}; thread {thread}{fresh}; ts {t["ts"]}]')
+
+
 def reply(ts, path, flags):
     with open(path, encoding='utf-8') as source:
         text = source.read().strip()
@@ -197,14 +241,7 @@ def answers(flags):
     def when(ts):
         return datetime.datetime.fromtimestamp(float(ts)).strftime('%b %d %H:%M')
 
-    messages, cursor = [], None
-    while True:
-        page = call('conversations.history', tok, read=True, channel=channel, limit=200, **({'cursor': cursor} if cursor else {}))
-        messages += page.get('messages', [])
-        cursor = page.get('response_metadata', {}).get('next_cursor')
-        if not cursor:
-            break
-    tickets = sorted((m for m in messages if (m.get('text') or '').lstrip().startswith('*Q:')), key=lambda m: float(m['ts']))
+    tickets = history(channel, tok)
 
     show_all = '--all' in flags
     open_count, shown = 0, 0
@@ -245,6 +282,8 @@ def main():
     if '--check' in flags:
         who = call('auth.test', token())
         print(f'Channel {channel_id()}. Posting as {who.get("user")} in {who.get("team")}' + (' (a bot)' if who.get('bot_id') else ' (a person)'))
+    elif '--list' in flags:
+        listing()
     elif '--answers' in flags:
         answers(flags)
     elif '--reply' in flags and len(args) == 2:

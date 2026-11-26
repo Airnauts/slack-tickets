@@ -10,7 +10,8 @@ A Claude Code plugin for asking a client questions through a Slack channel.
 - When a new document from the client contradicts an earlier one, Claude proposes a ticket for each conflict.
 - A decision we make after a ticket is posted is added to that ticket's thread, so the thread stays the record.
 
-The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up.
+The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up. Each
+time the skill loads it reads the list of open tickets from Slack, so Claude knows what is already asked.
 
 ## Install
 
@@ -73,6 +74,7 @@ Claude runs it for you. By hand, with the two variables set:
 
 ```
 python3 skills/ticket/scripts/tickets.py --check               which channel, whose token
+python3 skills/ticket/scripts/tickets.py --list                one line per open ticket
 python3 skills/ticket/scripts/tickets.py batch.json            dry run
 python3 skills/ticket/scripts/tickets.py batch.json --post     post the batch
 python3 skills/ticket/scripts/tickets.py --answers             new replies since the last check
