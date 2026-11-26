@@ -196,7 +196,7 @@ def post(path, flags):
     batch = load(path)
     tickets = batch.get('tickets', [])
     channel = channel_id()
-    if batch.get('channel') not in (None, channel):
+    if batch.get('channel') and batch['channel'] != channel:
         sys.exit('Not posted: the batch names another channel. Take "channel" out of the batch.')
     wrong = problems(tickets)
     if wrong:
