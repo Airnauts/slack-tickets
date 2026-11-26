@@ -31,7 +31,7 @@ hand: `/plugin marketplace update airnauts`, then `/reload-plugins`.
 ## Set up Slack (once per workspace)
 
 1. Go to https://api.slack.com/apps, choose "Create New App", then "From a manifest", pick the workspace, and paste
-   [`skills/ticket/assets/slack-app-manifest.yaml`](skills/ticket/assets/slack-app-manifest.yaml).
+   [`slack-app-manifest.yaml`](slack-app-manifest.yaml), the file at the top of this repository.
 2. Click "Install to Workspace". A workspace that requires approval for apps needs an admin here.
 3. Copy the "Bot User OAuth Token" (it starts with `xoxb-`) from "OAuth & Permissions". Share it with teammates
    through a password manager, never through chat or git.

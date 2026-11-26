@@ -19,7 +19,8 @@ the project's `.claude/settings.local.json`:
 - `SLACK_TICKETS_TOKEN`: the Slack app's bot token. (Without it the script reads the macOS Keychain, service `slack-tickets`.)
 
 Run `tickets.py --check` first in a session. It names the channel and whose token it is. If it reports something
-missing, tell the user what, point them at the plugin's README, and stop: do not set a token up for them, do not ask
+missing, tell the user what, point them at the setup steps in `${CLAUDE_PLUGIN_ROOT}/README.md` and at the Slack app
+manifest, `${CLAUDE_PLUGIN_ROOT}/slack-app-manifest.yaml`, and stop: do not set a token up for them, do not ask
 them to paste one into the chat, and never print the environment (`env`, `printenv`, `echo $SLACK_TICKETS_TOKEN`).
 
 ## A ticket's two parts
