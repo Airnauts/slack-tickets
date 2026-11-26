@@ -110,3 +110,7 @@ They never call Slack. A run that checks whether an agent follows the skill cost
 
 `tests/description/` checks whether the skill's description gets it called: a set of prompts and a runner that starts
 real sessions, so it is run by hand. See `tests/description/README.md` before changing the description.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
