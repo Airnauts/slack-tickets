@@ -3,7 +3,7 @@ they print in local time. Every timestamp is in the past, because remembered tim
 import re
 import unittest
 
-from helpers import CHANNEL
+from helpers import CHANNEL, PLEASE
 from test_list_answers import ANN, BEN, BOT, CLOSED_BY_US, T1, T2, SlackTestCase, lines_of, said, ticket, top
 
 FIRST_REPLY = '1700000100.000100'
@@ -106,6 +106,38 @@ class HintTests(SlackTestCase):
         self.assertNotIn('Friday is fine', result.out)
         self.assertIn('no reply yet', result.out)
         self.assertTrue(result.out.startswith(f'Channel {CHANNEL}: 1 open'))
+
+
+class ConversationTests(SlackTestCase):
+    def listed(self):
+        result = self.run_main('--list')
+        self.assertIsNone(result.code)
+        return lines_of(result.out)
+
+    def test_messages_by_people_are_counted_in_the_list(self):
+        self.history(ticket(T1), said(T2, ANN, 'Good morning'), said('1700001500.000100', BEN, 'Slides?'),
+                     {'ts': '1700002000.000100', 'user': ANN, 'subtype': 'channel_join', 'text': 'has joined'},
+                     {'ts': '1700002500.000100', 'user': BOT, 'bot_id': 'B1', 'text': 'From an app'})
+        self.assertEqual(self.listed()[-1], 'Not tickets, top-level messages by people, in what was read: 2.')
+
+    def test_a_channel_of_only_tickets_says_nothing_more(self):
+        self.history(ticket(T1), ticket(T2, top('Second?')))
+        self.assertFalse(any(line.startswith('Not tickets') for line in self.listed()))
+
+    def test_answers_do_not_count_conversation(self):
+        self.history(ticket(T1), said(T2, ANN, 'Good morning'))
+        self.slack.respond('users.info', {'ok': True, 'user': {}})
+        result = self.run_main('--answers')
+        self.assertNotIn('by people', result.out)
+
+    def test_the_please_line_passes_the_batch_check_and_the_ticket_test(self):
+        text = top() + '\n' + PLEASE
+        self.assertEqual(self.tickets.problems([{'id': 'a', 'top': text, 'details': 'x'}]), [])
+        self.assertTrue(self.tickets.is_ticket({'text': text}))
+        self.history(ticket(T1, text))
+        line = self.listed()[1]
+        self.assertIn('[Blocking; ', line)
+        self.assertIn(' by Jo Tester; ', line)
 
 
 if __name__ == '__main__':

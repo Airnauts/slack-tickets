@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 
-from helpers import CHANNEL, OTHER_CHANNEL, ROOT, SCRIPT, TicketsTestCase, run_cli, tickets
+from helpers import CHANNEL, OTHER_CHANNEL, PLEASE, ROOT, SCRIPT, TicketsTestCase, run_cli, tickets
 from test_state import git, make_repo
 
 SKILL = os.path.join(ROOT, 'skills', 'ticket')
@@ -307,6 +307,9 @@ class SkillFileTests(unittest.TestCase):
     def test_the_load_time_command_appears_once(self):
         pair = chr(33) + chr(96)
         self.assertEqual(read(SKILL, 'SKILL.md').count(pair), 1)
+
+    def test_the_skill_holds_the_please_line_once(self):
+        self.assertEqual(read(SKILL, 'SKILL.md').count(PLEASE), 1)
 
     def test_only_the_reading_commands_are_pre_approved(self):
         text = read(SKILL, 'SKILL.md')

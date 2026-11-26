@@ -167,6 +167,16 @@ in the project: which replies and hints `--answers` has already shown. Leave it 
 *Source:* <the client's own document or artifact, by name and section>   (only when the question comes from one)
 ```
 
+**In a channel that is not only tickets.** When the list at the top has a line that starts with
+`Not tickets, top-level messages by people`, the channel also carries conversation, and a client may answer there
+instead of in the thread. Then end each new ticket's top-level message with this line, exactly:
+
+```
+_Please answer in this message's thread, so the answer stays with the question._
+```
+
+Without that line in the list, leave it out.
+
 **The first reply in its thread** carries the rest, under a first line `*Details*`: what led to the question, the
 options and what each one means, the exact words when the question is about wording, links.
 

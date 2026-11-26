@@ -389,6 +389,12 @@ def lookalikes(messages):
     return [f'Not tickets, though they start with *Q: (no Urgency or Asked by field), in what was read: {found}.'] if found else []
 
 
+def conversation(messages):
+    """The line that says the channel carries messages by people besides the tickets; none when it does not."""
+    found = sum(1 for m in messages if by_people(m))
+    return [f'Not tickets, top-level messages by people, in what was read: {found}.'] if found else []
+
+
 def history(channel, tok):
     """Every top-level message in the channel, oldest first."""
     messages, cursor = [], None
@@ -431,7 +437,7 @@ def list_lines():
     is_closed = closer(tok)
     still_open = [t for t in tickets if not is_closed(t)]
     lines = [f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:']
-    return lines + [ticket_line(t, seen) for t in still_open] + lookalikes(messages)
+    return lines + [ticket_line(t, seen) for t in still_open] + lookalikes(messages) + conversation(messages)
 
 
 def ticket_line(t, seen):

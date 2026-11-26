@@ -25,6 +25,8 @@ CHANNEL = 'C0000000000'
 OTHER_CHANNEL = 'C1111111111'
 THIRD_CHANNEL = 'C2222222222'
 
+PLEASE = "_Please answer in this message's thread, so the answer stays with the question._"
+
 Call = namedtuple('Call', 'method tok read payload')
 Result = namedtuple('Result', 'code out')
 

@@ -87,6 +87,9 @@ When a client answers in the channel instead of the thread, `--answers` shows up
 unanswered ticket, once each, marked as not in its thread. Claude treats them as hints and asks for the answer in the
 thread.
 
+When the channel also carries conversation, `--list` says so, and Claude ends each new ticket with one line asking for
+the answer in its thread. Tickets in a channel of their own do not change.
+
 ## The script
 
 Claude runs it for you. By hand, with the two variables set (`--setup` needs neither):

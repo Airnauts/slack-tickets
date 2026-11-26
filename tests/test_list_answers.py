@@ -156,8 +156,9 @@ class ListingTests(SlackTestCase):
                      ticket(T3, 'Q: not bold start'))
         lines = self.listed()
         self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open, 0 closed.'), lines[0])
-        self.assertEqual(len(lines), 2)
+        self.assertEqual(len(lines), 3)
         self.assertIn('Indented one?', lines[1])
+        self.assertTrue(lines[2].startswith('Not tickets, top-level messages by people'), lines[2])
 
     def test_tickets_are_listed_oldest_first_across_pages(self):
         self.slack.respond('conversations.history',
@@ -175,10 +176,10 @@ class ListingTests(SlackTestCase):
     def test_a_message_that_only_starts_like_a_ticket_is_left_out_and_counted(self):
         self.history(ticket(T1), said(T2, ANN, '*Q:* does anyone have the slides?'))
         lines = self.listed()
-        self.assertEqual(len(lines), 3)
+        self.assertEqual(len(lines), 4)
         self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
         self.assertNotIn('slides', '\n'.join(lines))
-        self.assertEqual(lines[-1], 'Not tickets, though they start with *Q: (no Urgency or Asked by field), in what was read: 1.')
+        self.assertEqual(lines[2], 'Not tickets, though they start with *Q: (no Urgency or Asked by field), in what was read: 1.')
 
     def test_an_old_format_ticket_is_listed(self):
         self.history(ticket(T1, OLD_TOP.format(question='Can we ship on Friday?')))
