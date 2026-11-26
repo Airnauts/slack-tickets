@@ -106,6 +106,22 @@ class FakeSlack:
         return [c.method for c in self.calls]
 
 
+class FakeChannel:
+    """conversations.history over a list of top-level messages: newest first, limit at a time, after oldest
+    (and at it only with inclusive), with a cursor."""
+    def __init__(self, messages):
+        self.messages = messages
+
+    def __call__(self, limit, cursor=None, oldest=None, inclusive=None, **payload):
+        kept = sorted((m for m in self.messages
+                       if not oldest or float(m['ts']) > float(oldest) or (inclusive == 'true' and m['ts'] == oldest)),
+                      key=lambda m: -float(m['ts']))
+        start = int(cursor or 0)
+        more = start + limit < len(kept)
+        return {'ok': True, 'messages': kept[start:start + limit],
+                'response_metadata': {'next_cursor': str(start + limit) if more else ''}}
+
+
 class TicketsTestCase(unittest.TestCase):
     """A scratch folder as the current folder, no Slack variables, and Slack out of reach."""
 

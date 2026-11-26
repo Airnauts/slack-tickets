@@ -59,10 +59,10 @@ class ListingTests(SlackTestCase):
         self.assertIsNone(result.code)
         return lines_of(result.out)
 
-    def test_the_header_counts_open_and_closed_tickets(self):
+    def test_the_header_counts_open_tickets(self):
         self.history(ticket(T1), ticket(T2, reactions=CLOSED_BY_US), ticket(T3))
         header = self.listed()[0]
-        self.assertTrue(header.startswith(f'Channel {CHANNEL}: 2 open, 1 closed.'), header)
+        self.assertTrue(header.startswith(f'Channel {CHANNEL}: 2 open. Open tickets, oldest first:'), header)
 
     def test_an_open_ticket_has_its_question_urgency_asker_thread_and_ts(self):
         self.history(ticket(T1, reply_count=2, reply_users=[BOT, ANN], latest_reply='1700000500.000100'))
@@ -149,13 +149,13 @@ class ListingTests(SlackTestCase):
 
     def test_other_reactions_do_not_close_a_ticket(self):
         self.history(ticket(T1, reactions=[{'name': 'eyes', 'count': 1}]))
-        self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 1 open, 0 closed.'))
+        self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 1 open. Open tickets, oldest first:'))
 
     def test_messages_that_are_not_tickets_are_ignored(self):
         self.history(ticket(T1, 'Good morning everyone'), ticket(T2, '  *Q: Indented one?*\n*Urgency:* x'),
                      ticket(T3, 'Q: not bold start'))
         lines = self.listed()
-        self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open, 0 closed.'), lines[0])
+        self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open. Open tickets, oldest first:'), lines[0])
         self.assertEqual(len(lines), 3)
         self.assertIn('Indented one?', lines[1])
         self.assertTrue(lines[2].startswith('Not tickets, top-level messages by people'), lines[2])
@@ -328,7 +328,7 @@ class AnswersTests(SlackTestCase):
         self.answers()
         self.assertEqual(self.state()['seen'], {T1: '1700000100.000100'})
         self.slack.calls.clear()
-        self.assertEqual(lines_of(self.answers()), ['No new replies.', '1 ticket, 1 open.'])
+        self.assertEqual(lines_of(self.answers()), ['No new replies.', '1 ticket open.'])
         self.assertEqual(self.slack.made('conversations.replies'), [])
 
     def test_a_thread_served_in_two_pages_is_read_to_its_end(self):
@@ -352,8 +352,8 @@ class AnswersTests(SlackTestCase):
                 self.answers(flag)
                 self.assertEqual(self.state()['seen'], {})
 
-    def test_the_last_line_counts_tickets_and_open_ones(self):
-        self.assertEqual(lines_of(self.answers())[-1], '2 tickets, 1 open.')
+    def test_the_last_line_counts_open_tickets(self):
+        self.assertEqual(lines_of(self.answers())[-1], '1 ticket open.')
 
     def test_all_marks_a_ticket_with_a_strangers_check_mark_open(self):
         self.history(
@@ -371,7 +371,7 @@ class AnswersTests(SlackTestCase):
         self.answers()
         self.slack.calls.clear()
         out = self.answers()
-        self.assertEqual(lines_of(out), ['No new replies.', '2 tickets, 1 open.'])
+        self.assertEqual(lines_of(out), ['No new replies.', '1 ticket open.'])
         self.assertEqual(self.slack.made('conversations.replies'), [])
 
     def test_what_was_shown_is_remembered_in_the_project(self):
@@ -409,7 +409,7 @@ class AnswersTests(SlackTestCase):
         self.assertIn('[closed] Q: Is the old one closed?', out)
         self.assertIn('Ann Client', out)
         self.assertNotIn('No new replies.', out)
-        self.assertEqual(lines_of(out)[-1], '2 tickets, 1 open.')
+        self.assertEqual(lines_of(out)[-1], '1 ticket open.')
 
     def test_all_shows_replies_that_were_already_seen_and_remembers_nothing(self):
         older = '1700000250.000100'
@@ -781,7 +781,7 @@ class MainTests(SlackTestCase):
         del os.environ['SLACK_TICKETS_CHANNEL']
         self.slack.respond('conversations.history', {'ok': True, 'messages': []})
         result = self.run_main('--list', f'--channel={OTHER_CHANNEL}')
-        self.assertTrue(result.out.startswith(f'Channel {OTHER_CHANNEL}: 0 open, 0 closed.'))
+        self.assertTrue(result.out.startswith(f'Channel {OTHER_CHANNEL}: 0 open. Open tickets, oldest first:'))
         self.assertEqual(self.slack.made('conversations.history')[0]['channel'], OTHER_CHANNEL)
 
 

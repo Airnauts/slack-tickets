@@ -5,7 +5,7 @@
   tickets.py batch.json --post     posts; safe to run again, already posted tickets are skipped
   tickets.py --list                one line per open ticket (loaded with the skill, or run first; never fails)
   tickets.py --answers             replies that arrived since the last check, and how many tickets are open
-  tickets.py --answers --all       every ticket with every reply
+  tickets.py --answers --all       every ticket with every reply (reads the whole channel)
   tickets.py --answers --peek      as --answers, without remembering what was shown
   tickets.py --reply <ts> note.txt         dry run of a reply in a ticket's thread (our own update or decision)
   tickets.py --reply <ts> note.txt --post  posts it
@@ -25,8 +25,8 @@ Without SLACK_TICKETS_TOKEN the token is read from the macOS Keychain, service "
 batch.json: {"tickets": [{"id": "refund-wording", "top": "...", "details": "..."}]}
 Texts are Slack mrkdwn: *bold* with single asterisks (the question and each label), one line per field,
 nobody mentioned, and the top-level message says who asked ("*Asked by:* <name>").
-Results go to batch.result.json beside the batch. What --answers already showed is kept in
-.slack-tickets/state.json in the project (the main checkout, when run in a git worktree).
+Results go to batch.result.json beside the batch. What --answers already showed, and where the oldest open ticket
+was, is kept in .slack-tickets/state.json in the project (the main checkout, when run in a git worktree).
 """
 import datetime
 import json
@@ -250,14 +250,17 @@ def read_state(path):
     state = {} if linked(path) or not os.path.lexists(path) or tracked(path) else load(path)
     times = {key: {ts: last for ts, last in state.get(key, {}).items() if believable(last)} for key in ('seen', 'hinted')}
     names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
-    return dict(times, names=names)
+    found = state.get('oldest_open')
+    bounds = [] if found is None else [found if isinstance(found, str) and TIMESTAMP(found) and believable(found) else '']
+    return dict(times, names=names, bounds=bounds)
 
 
 def recall():
     """What --answers remembered, read as something a stranger could have put in the project, from every place
-    state_paths() names: the later timestamp per reply or hint wins, the first name per user stays.
-    A missing, unreadable, linked, tracked or oddly shaped file counts as nothing remembered. Never raises."""
-    seen, hinted, names = {}, {}, {}
+    state_paths() names: the later timestamp per reply or hint wins, the first name per user stays, the earliest
+    bound wins (an odd one means reading everything). A missing, unreadable, linked, tracked or oddly shaped file
+    counts as nothing remembered. Never raises."""
+    seen, hinted, names, bounds = {}, {}, {}, []
     try:
         paths = state_paths()
     except Exception:  # whatever the surroundings are, --list must still load with the skill
@@ -272,7 +275,9 @@ def recall():
                 merged[ts] = max(merged.get(ts, last), last, key=float)
         for user, name in part['names'].items():
             names.setdefault(user, name)
-    return {'names': names, 'seen': seen, 'hinted': hinted}
+        bounds += part['bounds']
+    return {'names': names, 'seen': seen, 'hinted': hinted,
+            'oldest_open': '' if '' in bounds or not bounds else min(bounds, key=float)}
 
 
 def write_state(path, state):
@@ -395,16 +400,32 @@ def conversation(messages):
     return [f'Not tickets, top-level messages by people, in what was read: {found}.'] if found else []
 
 
-def history(channel, tok):
-    """Every top-level message in the channel, oldest first."""
+def history(channel, tok, oldest=''):
+    """The channel's top-level messages, oldest first: every one, or those from the one at oldest on."""
+    since = {'oldest': oldest, 'inclusive': 'true'} if oldest else {}
     messages, cursor = [], None
     while True:
-        page = call('conversations.history', tok, read=True, channel=channel, limit=200, **({'cursor': cursor} if cursor else {}))
+        page = call('conversations.history', tok, read=True, channel=channel, limit=200, **since, **({'cursor': cursor} if cursor else {}))
         messages += page.get('messages', [])
         cursor = page.get('response_metadata', {}).get('next_cursor')
         if not cursor:
             break
     return sorted(messages, key=lambda m: float(m['ts']))
+
+
+def read_from(channel, tok, oldest):
+    """The top-level messages from the remembered bound on, and that bound. Everything, and no bound, when there is none
+    or when the message at the bound is not a ticket (deleted since, or a value that was never true)."""
+    if oldest:
+        messages = history(channel, tok, oldest)
+        if messages and messages[0].get('ts') == oldest and is_ticket(messages[0]):
+            return messages, oldest
+    return history(channel, tok), ''
+
+
+def bound(tickets, is_closed):
+    """Where the next read may start: the oldest open ticket, else the newest ticket; nothing when there are none."""
+    return next((t['ts'] for t in tickets if not is_closed(t)), tickets[-1]['ts'] if tickets else '')
 
 
 def replies(channel, tok, ts):
@@ -431,13 +452,14 @@ def listing():
 
 def list_lines():
     channel, tok = channel_id(), token()
-    messages = history(channel, tok)
+    state = recall()
+    messages, since = read_from(channel, tok, state['oldest_open'])
     tickets = [m for m in messages if is_ticket(m)]
-    seen = recall()['seen']
     is_closed = closer(tok)
     still_open = [t for t in tickets if not is_closed(t)]
-    lines = [f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:']
-    return lines + [ticket_line(t, seen) for t in still_open] + lookalikes(messages) + conversation(messages)
+    read = f', read from {datetime.datetime.fromtimestamp(float(since)).strftime("%b %d")} on' if since else ''
+    lines = [f'Channel {channel}: {len(still_open)} open{read}. Open tickets, oldest first:']
+    return lines + [ticket_line(t, state['seen']) for t in still_open] + lookalikes(messages) + conversation(messages)
 
 
 def ticket_line(t, seen):
@@ -572,11 +594,11 @@ def answers(flags):
     def when(ts):
         return datetime.datetime.fromtimestamp(float(ts)).strftime('%b %d %H:%M')
 
-    messages = history(channel, tok)
+    show_all = '--all' in flags
+    messages, _ = read_from(channel, tok, '' if show_all else state['oldest_open'])
     tickets = [m for m in messages if is_ticket(m)]
     is_closed = closer(tok)
 
-    show_all = '--all' in flags
     open_count, shown = 0, 0
     for ticket in tickets:
         closed = is_closed(ticket)
@@ -619,7 +641,8 @@ def answers(flags):
         print('No new replies.')
     for line in lookalikes(messages):
         print(line)
-    print(f'{count(len(tickets), "ticket")}, {open_count} open.')
+    print(f'{count(open_count, "ticket")} open.')
+    state['oldest_open'] = bound(tickets, is_closed)
     remember(state)
 
 

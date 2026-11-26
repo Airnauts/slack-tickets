@@ -1,14 +1,20 @@
 """A channel that carries conversation as well as tickets, with a fake Slack. Dates and times are never asserted on:
 they print in local time. Every timestamp is in the past, because remembered timestamps in the future are ignored."""
+import contextlib
+import os
+import random
 import re
 import unittest
 
-from helpers import CHANNEL, PLEASE
-from test_list_answers import ANN, BEN, BOT, CLOSED_BY_US, T1, T2, SlackTestCase, lines_of, said, ticket, top
+from helpers import CHANNEL, PLEASE, FakeChannel
+from test_list_answers import ANN, BEN, BOT, CLOSED_BY_US, OLD_TOP, T1, T2, T3, SlackTestCase, lines_of, said, ticket, top
+
+STATE = '.slack-tickets/state.json'
+STRANGERS = [{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]
 
 FIRST_REPLY = '1700000100.000100'
 CHAT = '1700000500.000100'
-NO_REPLIES = ['No new replies.', '1 ticket, 1 open.']
+NO_REPLIES = ['No new replies.', '1 ticket open.']
 
 
 class HintTests(SlackTestCase):
@@ -70,7 +76,7 @@ class HintTests(SlackTestCase):
     def test_no_hints_under_a_closed_ticket(self):
         self.first = ticket(T1, reply_count=1, reply_users=[BOT], latest_reply=FIRST_REPLY, reactions=CLOSED_BY_US)
         self.show()
-        self.assertEqual(lines_of(self.answers()), ['No new replies.', '1 ticket, 0 open.'])
+        self.assertEqual(lines_of(self.answers()), ['No new replies.', '0 tickets open.'])
 
     def test_our_and_apps_messages_joins_and_broadcasts_are_not_hints(self):
         self.chat = [
@@ -138,6 +144,159 @@ class ConversationTests(SlackTestCase):
         line = self.listed()[1]
         self.assertIn('[Blocking; ', line)
         self.assertIn(' by Jo Tester; ', line)
+
+
+class BoundTests(SlackTestCase):
+    def setUp(self):
+        super().setUp()
+        self.messages = []
+        self.slack.respond('conversations.history', FakeChannel(self.messages))
+        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        self.slack.respond('users.info', lambda user, **payload: {'ok': True, 'user': {'name': user}})
+        self.slack.respond('conversations.replies', self.thread)
+
+    def thread(self, ts, **payload):
+        parent = next(m for m in self.messages if m['ts'] == ts)
+        found = [parent, {'ts': ts[:-3] + '200', 'user': BOT, 'text': '*Details*\nWhy.'}]
+        if ANN in parent.get('reply_users', []):
+            found.append({'ts': parent['latest_reply'], 'user': ANN, 'text': 'An answer'})
+        return {'ok': True, 'messages': found}
+
+    def fill(self, *messages):
+        self.messages[:] = messages
+
+    def long_channel(self):
+        """4,990 messages, one open ticket at T1, then nine more: 25 pages of 200."""
+        self.fill(*[said(f'{1600000000 + i}.000100', ANN, f'Chat {i}') for i in range(4990)], ticket(T1),
+                  *[said(f'{1700001000 + i}.000100', BEN, f'More {i}') for i in range(9)])
+
+    def remember_bound(self, bound):
+        self.write_json(STATE, {'seen': {}, 'names': {}, 'oldest_open': bound})
+
+    def forget(self):
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(STATE)
+
+    def last_read(self):
+        return self.slack.made('conversations.history')[-1]
+
+    def test_a_remembered_bound_reads_one_page_of_a_long_channel(self):
+        self.long_channel()
+        self.remember_bound(T1)
+        out = self.run_main('--list').out
+        reads = self.slack.made('conversations.history')
+        self.assertEqual(len(reads), 1)
+        self.assertEqual((reads[0]['oldest'], reads[0]['inclusive']), (T1, 'true'))
+        self.assertIn('Can we ship on Friday?', out)
+
+    def test_after_answers_the_list_reads_from_the_oldest_open_ticket(self):
+        self.long_channel()
+        self.assertIsNone(self.run_main('--answers').code)
+        self.assertEqual(len(self.slack.made('conversations.history')), 25)
+        self.assertEqual(self.state()['oldest_open'], T1)
+        self.slack.calls.clear()
+        self.run_main('--list')
+        self.assertEqual(len(self.slack.made('conversations.history')), 1)
+
+    def test_the_header_says_from_when_it_read(self):
+        self.long_channel()
+        self.assertNotIn(', read from ', self.run_main('--list').out.splitlines()[0])
+        self.remember_bound(T1)
+        self.assertIn(', read from ', self.run_main('--list').out.splitlines()[0])
+
+    def test_a_bound_that_is_not_a_ticket_means_a_full_read(self):
+        self.fill(ticket(T1), said(T2, ANN, 'Good morning'))
+        self.remember_bound(T2)
+        out = self.run_main('--list').out
+        reads = self.slack.made('conversations.history')
+        self.assertEqual(len(reads), 2)
+        self.assertNotIn('oldest', reads[1])
+        self.assertIn('Can we ship on Friday?', out)
+
+    def test_answers_remembers_the_oldest_open_or_the_newest_ticket(self):
+        cases = {
+            'some open': ([ticket(T1, reactions=CLOSED_BY_US), ticket(T2, top('Two?')), ticket(T3, top('Three?'))], T2),
+            'all closed': ([ticket(T1, reactions=CLOSED_BY_US), ticket(T3, top('Three?'), reactions=CLOSED_BY_US)], T3),
+            'no tickets': ([said(T1, ANN, 'Good morning')], ''),
+        }
+        for why, (messages, want) in cases.items():
+            with self.subTest(why=why):
+                self.forget()
+                self.fill(*messages)
+                self.assertIsNone(self.run_main('--answers').code)
+                self.assertEqual(self.state()['oldest_open'], want)
+
+    def test_a_reopened_ticket_before_the_bound_needs_answers_all(self):
+        self.fill(ticket(T1, top('Reopened one?')), ticket(T2, top('Closed one?'), reactions=CLOSED_BY_US),
+                  ticket(T3, top('Still open?')))
+        self.remember_bound(T2)
+        listed = self.run_main('--list').out
+        self.assertNotIn('Reopened one?', listed)
+        self.assertIn('Still open?', listed)
+        self.run_main('--answers', '--all')
+        self.assertNotIn('oldest', self.last_read())
+        self.assertEqual(self.state()['oldest_open'], T1)
+        self.assertIn('Reopened one?', self.run_main('--list').out)
+
+    def random_ticket(self, rng, ts):
+        text = OLD_TOP.format(question=f'Question {ts}?') if rng.random() < 0.3 else top(f'Question {ts}?')
+        extra = {'user': None, 'bot_id': 'B0000000001'} if rng.random() < 0.2 else {}
+        replies = rng.choice(['none', 'details', 'answered'])
+        if replies == 'details':
+            extra.update(reply_count=1, reply_users=[BOT], latest_reply=ts[:-3] + '200')
+        elif replies == 'answered':
+            extra.update(reply_count=2, reply_users=[BOT, ANN], latest_reply=ts[:-3] + '300')
+        mark = rng.random()
+        if mark < 0.5:
+            extra['reactions'] = CLOSED_BY_US
+        elif mark < 0.65:
+            extra['reactions'] = STRANGERS
+        return ticket(ts, text, **extra)
+
+    def random_message(self, rng, index):
+        ts = f'{1700000000 + 60 * index}.000100'
+        if rng.random() < 0.3:
+            return self.random_ticket(rng, ts)
+        kind = rng.choice(['chat', 'lookalike', 'join'])
+        if kind == 'chat':
+            return said(ts, rng.choice([ANN, BEN]), 'Some chat')
+        if kind == 'lookalike':
+            return said(ts, ANN, '*Q:* anyone?')
+        return {'ts': ts, 'user': ANN, 'subtype': 'channel_join', 'text': 'has joined'}
+
+    def change_the_channel(self, rng, first_new):
+        for index in range(first_new, first_new + rng.randint(1, 15)):
+            self.messages.append(self.random_message(rng, index))
+        for t in [m for m in self.messages if self.tickets.is_ticket(m)]:
+            roll = rng.random()
+            if roll < 0.15:
+                t['reactions'] = CLOSED_BY_US
+            elif roll < 0.25 and not t.get('reactions'):
+                t['reactions'] = STRANGERS
+            if rng.random() < 0.15:
+                t.update(reply_count=2, reply_users=[BOT, ANN], latest_reply=t['ts'][:-3] + '300')
+
+    def open_tickets(self):
+        lines = self.run_main('--list').out.splitlines()
+        return [re.sub(r', read from [^.]* on', '', lines[0])] + [line for line in lines if line.startswith('- ')]
+
+    def test_a_bounded_read_lists_the_same_open_tickets_as_a_full_read(self):
+        rng = random.Random(20261126)
+        for round_number in range(25):
+            with self.subTest(round=round_number):
+                self.forget()
+                count = rng.randint(20, 120)
+                self.fill(*[self.random_message(rng, index) for index in range(count)])
+                self.run_main('--answers')
+                self.change_the_channel(rng, count)
+                bounded = self.open_tickets()
+                stored = self.state()['oldest_open']
+                if stored:
+                    self.assertEqual(self.last_read()['oldest'], stored)
+                state = self.state()
+                del state['oldest_open']
+                self.write_json(STATE, state)
+                self.assertEqual(bounded, self.open_tickets())
 
 
 if __name__ == '__main__':

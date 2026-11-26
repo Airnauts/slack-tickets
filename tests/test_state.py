@@ -11,7 +11,7 @@ from unittest import mock
 
 from helpers import TicketsTestCase, clean_git_environment
 
-EMPTY = {'names': {}, 'seen': {}, 'hinted': {}}
+EMPTY = {'names': {}, 'seen': {}, 'hinted': {}, 'oldest_open': ''}
 needs_git = unittest.skipUnless(shutil.which('git'), 'git is not installed')
 needs_links = unittest.skipUnless(hasattr(os, 'symlink'), 'no symbolic links on this system')
 
@@ -202,13 +202,35 @@ class WorktreeStateTests(StateTestCase):
                 self.put_in(self.tree, json.dumps({'hinted': {'1.0': tree_last}}))
                 self.assertEqual(self.tickets.recall()['hinted'], {'1.0': '3.000003'})
 
+    def test_the_earlier_bound_wins_whichever_place_holds_it(self):
+        os.chdir(self.tree)
+        for main_ts, tree_ts in (('1700000000.000100', '1700001000.000100'), ('1700001000.000100', '1700000000.000100')):
+            with self.subTest(main=main_ts):
+                self.put_in(self.repo, json.dumps({'oldest_open': main_ts}))
+                self.put_in(self.tree, json.dumps({'oldest_open': tree_ts}))
+                self.assertEqual(self.tickets.recall()['oldest_open'], '1700000000.000100')
+
+    def test_an_odd_bound_in_either_place_means_a_full_read(self):
+        os.chdir(self.tree)
+        for odd_here, odd_there in ((self.repo, self.tree), (self.tree, self.repo)):
+            with self.subTest(odd=odd_here):
+                self.put_in(odd_here, json.dumps({'oldest_open': 'abc'}))
+                self.put_in(odd_there, json.dumps({'oldest_open': '1700000000.000100'}))
+                self.assertEqual(self.tickets.recall()['oldest_open'], '')
+
+    def test_a_file_without_a_bound_leaves_the_others(self):
+        os.chdir(self.tree)
+        self.put_in(self.repo, json.dumps({'seen': {'1.0': '2.000002'}}))
+        self.put_in(self.tree, json.dumps({'oldest_open': '1700000000.000100'}))
+        self.assertEqual(self.tickets.recall()['oldest_open'], '1700000000.000100')
+
     def test_a_broken_file_in_one_place_does_not_hide_the_other(self):
         os.chdir(self.tree)
         for broken, good in ((self.repo, self.tree), (self.tree, self.repo)):
             with self.subTest(broken=broken):
                 self.put_in(broken, '{not json')
                 self.put_in(good, json.dumps({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}}))
-                self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}})
+                self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}, 'oldest_open': ''})
 
     @needs_links
     @needs_permissions
@@ -259,7 +281,7 @@ class InheritedGitVariablesTests(StateTestCase):
 class TrackedStateTests(StateTestCase):
     """A file that arrives through a branch is tracked by git. The script's own file never is."""
     PLANTED = {'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}}
-    FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}, 'hinted': {}}
+    FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}, 'hinted': {}, 'oldest_open': ''}
 
     def commit_state(self, folder, text):
         self.put_in(folder, text)
@@ -342,7 +364,7 @@ class StatePathOutsideGitTests(StateTestCase):
         os.makedirs(plain)
         os.chdir(plain)
         self.tickets.remember({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}})
-        self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}})
+        self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}, 'oldest_open': ''})
 
 
 @needs_links
@@ -403,6 +425,15 @@ class StateContentTests(StateTestCase):
         self.project('hints')
         self.put(json.dumps({'hinted': {'1.0': '2.000002', '3.0': 'inf', '4.0': None}}))
         self.assertEqual(self.tickets.recall()['hinted'], {'1.0': '2.000002'})
+
+    def test_an_odd_bound_means_a_full_read(self):
+        self.project('bound')
+        for odd in ('abc', '1700000000', 1700000000.5, '99999999999.000000', ''):
+            with self.subTest(odd=odd):
+                self.put(json.dumps({'oldest_open': odd}))
+                self.assertEqual(self.tickets.recall()['oldest_open'], '')
+        self.put(json.dumps({'oldest_open': '1700000000.000100'}))
+        self.assertEqual(self.tickets.recall()['oldest_open'], '1700000000.000100')
 
     def test_a_name_stays_on_one_line(self):
         self.write_odd_values()

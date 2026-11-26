@@ -90,6 +90,10 @@ thread.
 When the channel also carries conversation, `--list` says so, and Claude ends each new ticket with one line asking for
 the answer in its thread. Tickets in a channel of their own do not change.
 
+`--list` and `--answers` read the channel only from the oldest ticket that was open at the last `--answers`. A ticket
+closed long ago and opened again by removing its check mark is not seen until `tickets.py --answers --all`, which reads
+everything and starts over.
+
 ## The script
 
 Claude runs it for you. By hand, with the two variables set (`--setup` needs neither):
@@ -115,9 +119,9 @@ anything with `--channel=<id>` ask you first. When Claude Code asks, answer yes 
 again" saves a rule that covers every `tickets.py` command, a post included. Your own permission rules come before the
 skill's: a rule of yours that allows every `python3` command makes all of them run without asking.
 
-It needs Python 3 and nothing else. It remembers which replies and hints it has shown in
-`.slack-tickets/state.json` in the project, a folder it creates and keeps out of git. Git worktrees share the main
-checkout's file.
+It needs Python 3 and nothing else. It remembers which replies and hints it has shown, and where the oldest open ticket
+was, in `.slack-tickets/state.json` in the project, a folder it creates and keeps out of git. Git worktrees share the
+main checkout's file.
 
 An agent whose sandbox may not write to the main checkout keeps its own copy in its worktree, so a reply repeats once
 per worktree at most. To share it, add the main checkout's `.slack-tickets` folder to the folders the sandbox may
