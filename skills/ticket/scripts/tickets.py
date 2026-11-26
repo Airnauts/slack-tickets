@@ -80,10 +80,10 @@ def setup():
     Reads no token, checks no channel, calls nobody, and never raises: a missing file is said, not an error."""
     for title, name in SETUP_FILES:
         try:
-            with open(os.path.join(SKILL_DIR, *name.split('/')), encoding='utf-8') as source:
+            with open(os.path.join(SKILL_DIR, name), encoding='utf-8') as source:
                 text = source.read().strip()
         except Exception as error:  # missing, unreadable or not UTF-8
-            text = f'(Missing from the skill\'s folder: {name} ({type(error).__name__}).)'
+            text = f"(Missing from the skill's folder: {name} ({type(error).__name__}).)"
         try:
             print(f'===== {title}: {name} =====\n{text}\n===== End of {name} =====\n')
         except Exception:  # a terminal that cannot show a character; both files are ASCII, so only a damaged copy

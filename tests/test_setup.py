@@ -18,7 +18,7 @@ NO_TOKEN = 'No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain
 
 
 def read(folder, name):
-    with open(os.path.join(folder, *name.split('/')), encoding='utf-8') as source:
+    with open(os.path.join(folder, name), encoding='utf-8') as source:
         return source.read()
 
 
@@ -48,7 +48,7 @@ class SetupTests(TicketsTestCase):
         self.assertFalse([line for line in out.splitlines() if line.startswith(('Channel', 'Posting'))])
 
     def test_each_section_is_the_file_stripped(self):
-        code, out = run_cli(['--setup'])
+        _, out = run_cli(['--setup'])
         for title, name in (STEPS, MANIFEST):
             self.assertEqual(section(out, title, name), read(SKILL, name).strip())
 
@@ -81,25 +81,6 @@ class SetupTests(TicketsTestCase):
         for title, name in (STEPS, MANIFEST):
             self.assertEqual(section(out, title, name), read(SKILL, name).strip())
 
-    def test_both_files_are_ascii_and_the_steps_wrap_at_120(self):
-        for _, name in (STEPS, MANIFEST):
-            read(SKILL, name).encode('ascii')
-        for number, line in enumerate(read(SKILL, STEPS[1]).splitlines(), 1):
-            self.assertLessEqual(len(line), 120, f'references/setup.md line {number}')
-
-
-    def test_the_manifest_asks_for_exactly_the_five_permissions(self):
-        scopes = set()
-        in_bot = False
-        for line in read(SKILL, MANIFEST[1]).splitlines():
-            if line.strip() == 'bot:':
-                in_bot = True
-            elif in_bot and line.startswith('      - '):
-                scopes.add(line[len('      - '):].strip())
-            elif in_bot:
-                break
-        self.assertEqual(scopes, {'chat:write', 'groups:history', 'channels:history', 'users:read', 'reactions:write'})
-
 
 class SetupMessageTests(TicketsTestCase):
     def test_list_without_a_channel_still_exits_zero(self):
@@ -130,6 +111,24 @@ class SkillFileTests(unittest.TestCase):
         match = re.search(r'^description: "(.*)"$', text, re.M)
         self.assertIsNotNone(match)
         self.assertLess(len(match.group(1)), 1024)
+
+    def test_both_files_are_ascii_and_the_steps_wrap_at_120(self):
+        for _, name in (STEPS, MANIFEST):
+            read(SKILL, name).encode('ascii')
+        for number, line in enumerate(read(SKILL, STEPS[1]).splitlines(), 1):
+            self.assertLessEqual(len(line), 120, f'references/setup.md line {number}')
+
+    def test_the_manifest_asks_for_exactly_the_five_permissions(self):
+        scopes = set()
+        in_bot = False
+        for line in read(SKILL, MANIFEST[1]).splitlines():
+            if line.strip() == 'bot:':
+                in_bot = True
+            elif in_bot and line.startswith('      - '):
+                scopes.add(line[len('      - '):].strip())
+            elif in_bot:
+                break
+        self.assertEqual(scopes, {'chat:write', 'groups:history', 'channels:history', 'users:read', 'reactions:write'})
 
 
 if __name__ == '__main__':
