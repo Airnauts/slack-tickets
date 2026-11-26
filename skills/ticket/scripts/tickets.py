@@ -108,7 +108,7 @@ def load(path):
 
 def state_path():
     """Where --answers remembers what it showed: .slack-tickets/state.json in the project the script is run from.
-    In a git worktree that is the main checkout, so every worktree shares one file. Never raises."""
+    In a git worktree that is the main checkout, so every worktree shares one file."""
     try:
         found = subprocess.run(['git', 'rev-parse', '--git-common-dir'], capture_output=True, text=True)
         common = os.path.abspath(found.stdout.strip()) if found.returncode == 0 and found.stdout.strip() else ''
@@ -128,19 +128,19 @@ def believable(last):
     """A reply's timestamp that can be true: a number, and not in the future (a day's slack for a clock that is off)."""
     try:
         return 0 < float(last) <= time.time() + 86400
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
 
 def recall():
     """What --answers remembered, read as something a stranger could have put in the project.
     A missing, unreadable, linked or oddly shaped file counts as nothing remembered. Never raises."""
-    path = state_path()
     try:
+        path = state_path()
         state = {} if linked(path) else load(path)
         seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
         names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
-    except (OSError, ValueError, AttributeError):
+    except Exception:  # whatever the file holds, --list must still load with the skill
         seen, names = {}, {}
     return {'names': names, 'seen': seen}
 
