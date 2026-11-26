@@ -168,6 +168,19 @@ def linked(path):
     return os.path.islink(path) or os.path.islink(os.path.dirname(path))
 
 
+def git_exit(folder, *args):
+    """The exit code of one git command run in folder, or None when git is not there or the folder is not usable."""
+    try:
+        return subprocess.run(['git', '-C', folder, *args], capture_output=True, text=True).returncode
+    except OSError:
+        return None
+
+
+def tracked(path):
+    """True when git tracks the state file: a file that arrives with a branch, never the script's own."""
+    return git_exit(os.path.dirname(os.path.dirname(path)), 'ls-files', '--error-unmatch', '--', '.slack-tickets/state.json') == 0
+
+
 def believable(last):
     """A reply's timestamp that can be true: a number, and not in the future (a day's slack for a clock that is off)."""
     try:
@@ -178,7 +191,7 @@ def believable(last):
 
 def read_state(path):
     """The believable part of one state file. Raises on a file that is oddly shaped or unreadable."""
-    state = {} if linked(path) else load(path)
+    state = {} if linked(path) or tracked(path) else load(path)
     seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
     names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
     return seen, names
@@ -187,7 +200,7 @@ def read_state(path):
 def recall():
     """What --answers remembered, read as something a stranger could have put in the project, from every place
     state_paths() names: the later timestamp per reply wins, the first name per user stays.
-    A missing, unreadable, linked or oddly shaped file counts as nothing remembered. Never raises."""
+    A missing, unreadable, linked, tracked or oddly shaped file counts as nothing remembered. Never raises."""
     seen, names = {}, {}
     try:
         paths = state_paths()
@@ -210,12 +223,16 @@ def write_state(path, state):
     folder = os.path.dirname(path)
     if linked(path):
         raise OSError(0, 'a link stands in its place')
+    if tracked(path):
+        raise OSError(0, 'git tracks it')
     os.makedirs(folder, exist_ok=True)
     try:  # before the state, so the state is never in the project without it; 'x' does not follow a link
         with open(os.path.join(folder, '.gitignore'), 'x', encoding='utf-8') as out:
             out.write('*\n')
     except FileExistsError:
         pass
+    if git_exit(os.path.dirname(folder), 'check-ignore', '-q', '--', '.slack-tickets/state.json') == 1:
+        raise OSError(0, 'git would not ignore it')
     save(path, state)
 
 

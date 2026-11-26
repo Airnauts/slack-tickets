@@ -27,6 +27,11 @@ def make_repo(path):
         'commit', '-q', '--allow-empty', '-m', 'first', cwd=path)
 
 
+def commit(message, cwd):
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false',
+        'commit', '-q', '-m', message, cwd=cwd)
+
+
 class StateTestCase(TicketsTestCase):
     def state_file(self, folder):
         return os.path.join(folder, '.slack-tickets', 'state.json')
@@ -220,12 +225,83 @@ class InheritedGitVariablesTests(StateTestCase):
         self.assertEqual(self.heads(repo), before)
 
 
+@needs_git
+class TrackedStateTests(StateTestCase):
+    """A file that arrives through a branch is tracked by git. The script's own file never is."""
+    PLANTED = {'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}}
+    FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}}
+
+    def commit_state(self, folder, text):
+        os.makedirs(os.path.join(folder, '.slack-tickets'), exist_ok=True)
+        with open(self.state_file(folder), 'w', encoding='utf-8') as out:
+            out.write(text)
+        git('add', '-f', os.path.join('.slack-tickets', 'state.json'), cwd=folder)
+        commit('plant', folder)
+
+    def read(self, folder):
+        with open(self.state_file(folder), encoding='utf-8') as source:
+            return json.load(source)
+
+    def test_a_committed_state_file_is_not_read_or_changed(self):
+        repo = os.path.join(self.tmp, 'repo')
+        os.makedirs(repo)
+        make_repo(repo)
+        self.commit_state(repo, json.dumps(self.PLANTED))
+        os.chdir(repo)
+        self.assertEqual(self.tickets.recall(), EMPTY)
+        out = self.remember_quietly(self.FRESH)
+        self.assertIn('could not be remembered', out)
+        self.assertIn('git tracks it', out)
+        self.assertEqual(self.read(repo), self.PLANTED)
+
+    def test_a_branchs_committed_file_in_a_worktree_is_not_read_or_merged(self):
+        repo, tree = os.path.join(self.tmp, 'repo'), os.path.join(self.tmp, 'tree')
+        os.makedirs(repo)
+        make_repo(repo)
+        git('worktree', 'add', '-q', '-b', 'planted', tree, cwd=repo)
+        self.commit_state(tree, json.dumps(self.PLANTED))
+        os.chdir(tree)
+        self.assertEqual(self.tickets.recall(), EMPTY)
+        self.assertEqual(self.remember_quietly(self.FRESH), '')
+        self.assertEqual(self.read(repo), self.FRESH)
+        self.assertEqual(self.read(tree), self.PLANTED)
+
+    def test_an_ignore_file_that_does_not_ignore_the_state_gets_no_state_written(self):
+        repo = os.path.join(self.tmp, 'repo')
+        os.makedirs(os.path.join(repo, '.slack-tickets'))
+        make_repo(repo)
+        with open(os.path.join(repo, '.slack-tickets', '.gitignore'), 'w', encoding='utf-8') as out:
+            out.write('# nothing is ignored here\n')
+        git('add', '-f', os.path.join('.slack-tickets', '.gitignore'), cwd=repo)
+        commit('plant', repo)
+        os.chdir(repo)
+        out = self.remember_quietly(self.FRESH)
+        self.assertIn('could not be remembered', out)
+        self.assertIn('git would not ignore it', out)
+        self.assertFalse(os.path.exists(self.state_file(repo)))
+
+    def test_without_git_on_the_path_saving_and_reading_back_still_work(self):
+        plain = os.path.join(self.tmp, 'plain')
+        os.makedirs(plain)
+        os.chdir(plain)
+        with mock.patch.dict(os.environ, {'PATH': os.path.join(self.tmp, 'nothing-here')}):
+            self.assertEqual(self.remember_quietly(self.FRESH), '')
+            self.assertEqual(self.tickets.recall(), self.FRESH)
+
+
 class StatePathOutsideGitTests(StateTestCase):
     def test_folder_outside_git(self):
         plain = os.path.join(self.tmp, 'plain')
         os.makedirs(plain)
         os.chdir(plain)
         self.assert_path(self.tickets.state_path(), self.state_file(plain))
+
+    def test_saved_and_read_back_outside_a_repository(self):
+        plain = os.path.join(self.tmp, 'plain')
+        os.makedirs(plain)
+        os.chdir(plain)
+        self.tickets.remember({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}})
+        self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}})
 
 
 @needs_links

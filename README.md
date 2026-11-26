@@ -89,10 +89,11 @@ python3 skills/ticket/scripts/tickets.py --close <ts>          mark a ticket clo
 python3 skills/ticket/scripts/tickets.py --list --channel=C0123456789   a channel for one run, when none is set
 ```
 
-In Claude Code the skill lets only the commands that read run without asking: `--list`, `--answers`, `--check`,
-`--setup` and `--sources-template`. A dry run, a post, a reply, a close, and anything with `--channel=<id>` ask you
-first. Your own permission rules come before the skill's: a rule of yours that allows every `python3` command makes
-all of them run without asking.
+In Claude Code the skill lets only the commands that post nothing to Slack run without asking: `--list`,
+`--answers`, `--check`, `--setup` and `--sources-template`. A dry run, a post, a reply, a close, and anything with
+`--channel=<id>` ask you first. When Claude Code asks, answer yes for that one command. "Don't ask again" saves a rule
+that covers every `tickets.py` command, a post included. Your own permission rules come before the skill's: a rule of
+yours that allows every `python3` command makes all of them run without asking.
 
 It needs Python 3 and nothing else. It remembers which replies it has shown in `.slack-tickets/state.json` in the
 project, a folder it creates and keeps out of git. Git worktrees share the main checkout's file.

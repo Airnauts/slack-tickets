@@ -59,7 +59,9 @@ Read this before you run one. Keep it true when you change a script or add a cas
   should make it do, not something a flag enforces. What stops a post is still the missing token. The `refusal` case
   leaves that rule out.
 - Only `SLACK_TICKETS_TOKEN` and `SLACK_TICKETS_CHANNEL` are removed or set. The rest of the shell's environment is
-  inherited, and your user-level Claude Code settings and connectors still apply.
+  inherited, and your user-level Claude Code settings and connectors still apply. The `refusal` case is the
+  exception: it leaves the caller's own settings out, so a rule of theirs that allows `python3` cannot hide the
+  refusal. That also leaves out their deny rules, hooks and connectors.
 - `Write` is allowed without a path limit, so a run can write outside the scratch folder. The skill may write a batch to
   a temporary folder. Check what the run wrote if that matters to you.
 - The Slack connector's search tools are disallowed in every case, so no real channel is looked up. Its write tools are

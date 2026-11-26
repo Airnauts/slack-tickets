@@ -24,10 +24,11 @@ file), run with `python3`. From here on it is written `tickets.py`. Call it by i
 project; never `cd` into the skill's folder, because the script keeps its notes in the project it is run from.
 
 Run each `tickets.py` command alone and exactly as written here, with nothing before or after it in the same call.
-In Claude Code only the commands that read run without asking: `--list`, `--answers` (also with `--all` or
-`--peek`), `--check`, `--setup` and `--sources-template`. A dry run, a post, a reply, a close, and any command with
-`--channel=<id>` ask the user first. That is intended. When a command is refused, say so and stop: never look for
-another way to run it.
+In Claude Code only the commands that post nothing to Slack run without asking: `--list`, `--answers` (also with
+`--all` or `--peek`), `--check`, `--setup` and `--sources-template`. A dry run, a post, a reply, a close, and any
+command with `--channel=<id>` ask the user first. That is intended. When a command is refused, say so and stop. Never
+look for another way to run it or to get the same result: not the Slack connector, not another path to the script, not
+a chained command, not a script of your own.
 
 ## First: the open tickets
 
