@@ -233,9 +233,12 @@ class AnswersTests(SlackTestCase):
         self.assertIn('No new replies.', out)
         self.assertNotIn('[open]', out)
 
-    def test_a_ticket_with_only_its_details_reply_is_not_read_again(self):
+    def only_details(self):
         self.thread = self.thread[:2]
         self.history(ticket(T1, reply_count=1, reply_users=[BOT], latest_reply='1700000100.000100'))
+
+    def test_a_ticket_with_only_its_details_reply_is_not_read_again(self):
+        self.only_details()
         self.answers()
         self.assertEqual(self.state()['seen'], {T1: '1700000100.000100'})
         self.slack.calls.clear()
@@ -243,8 +246,7 @@ class AnswersTests(SlackTestCase):
         self.assertEqual(self.slack.made('conversations.replies'), [])
 
     def test_a_thread_cut_short_by_slack_is_read_again(self):
-        self.thread = self.thread[:2]
-        self.history(ticket(T1, reply_count=1, reply_users=[BOT], latest_reply='1700000100.000100'))
+        self.only_details()
         self.slack.respond('conversations.replies', lambda **payload: {'ok': True, 'messages': self.thread, 'has_more': True})
         self.answers()
         self.assertEqual(self.state()['seen'], {})
@@ -253,8 +255,7 @@ class AnswersTests(SlackTestCase):
         self.assertEqual(len(self.slack.made('conversations.replies')), 1)
 
     def test_peek_and_all_do_not_remember_a_ticket_with_only_its_details_reply(self):
-        self.thread = self.thread[:2]
-        self.history(ticket(T1, reply_count=1, reply_users=[BOT], latest_reply='1700000100.000100'))
+        self.only_details()
         for flag in ('--peek', '--all'):
             with self.subTest(flag=flag):
                 self.answers(flag)

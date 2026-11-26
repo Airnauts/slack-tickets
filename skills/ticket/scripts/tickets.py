@@ -42,6 +42,7 @@ import urllib.request
 
 KEYCHAIN = 'slack-tickets'
 CLOSED = 'white_check_mark'
+TIMESTAMP = re.compile(r'\d{10}\.\d{6}').fullmatch
 # The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SETUP_FILES = (('The setup steps', 'references/setup.md'), ('The Slack app manifest', 'assets/slack-app-manifest.yaml'))
@@ -104,11 +105,8 @@ def sources():
     except SystemExit:  # no channel is configured, so there is no second place
         pass
     for base, names in places:
-        path, bent = base, False
-        for name in names:
-            path = os.path.join(path, name)
-            bent = bent or os.path.islink(path)
-        if bent:
+        path = os.path.join(base, *names)
+        if any(os.path.islink(os.path.join(base, *names[:depth])) for depth in range(1, len(names) + 1)):
             print(f'(Not read: {path} is reached through a link.)')
             continue
         try:  # no following of a link and no waiting on a pipe; the checks and the read use one descriptor
@@ -128,9 +126,9 @@ def sources():
             print(f'(Not read: {path} ({refusal}).)')
             continue
         text = re.sub(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]', ' ', text).strip()  # nothing in it can pass for the frame
-        lines = text.count('\n') + 1
+        lines = count(text.count('\n') + 1, 'line')
         try:
-            print(f'===== The register: {path} ({lines} line{"" if lines == 1 else "s"}) =====\n{text}\n===== End of the register =====')
+            print(f'===== The register: {path} ({lines}) =====\n{text}\n===== End of the register =====')
         except Exception:  # a terminal that cannot show a character
             pass
         return
@@ -176,8 +174,8 @@ def call(method, tok, read=False, **payload):
     sys.exit(f'{method}: rate limited too many times')
 
 
-def count_tickets(number):
-    return f'{number} ticket' + ('' if number == 1 else 's')
+def count(number, noun):
+    return f'{number} {noun}' + ('' if number == 1 else 's')
 
 
 def save(path, value):
@@ -342,7 +340,7 @@ def post(path, flags):
         for t in tickets:
             mark = 'already posted' if done.get(t['id'], {}).get('details_ts') else 'to post'
             print(f'--- {t["id"]} ({mark})\n{t["top"]}\n  [thread]\n{t["details"]}\n')
-        print(f'Dry run: {count_tickets(len(tickets))} for {channel}, nothing posted. Add --post to post.')
+        print(f'Dry run: {count(len(tickets), "ticket")} for {channel}, nothing posted. Add --post to post.')
         return
 
     tok = token()
@@ -364,7 +362,7 @@ def post(path, flags):
             state['link'] = call('chat.getPermalink', tok, read=True, channel=where, message_ts=state['ts']).get('permalink')
             save(result_path, done)
         print(f'{t["id"]}: {state.get("link")}')
-    print(f'Posted {count_tickets(len(tickets))}. Results: {result_path}')
+    print(f'Posted {count(len(tickets), "ticket")}. Results: {result_path}')
 
 
 def fields(lines):
@@ -425,7 +423,7 @@ def reply(ts, path, flags):
         text = source.read().strip()
     if not text or '<@' in text or '<!' in text or len(text) > 3500:
         sys.exit('Not posted: a reply needs some text, mentions nobody and fits one message.')
-    if not re.fullmatch(r'\d{10}\.\d{6}', ts):
+    if not TIMESTAMP(ts):
         sys.exit('Not posted: the first argument is the ticket\'s timestamp, as printed by --answers (like 1700000000.000100).')
     channel = channel_id()
     if '--post' not in flags:
@@ -444,7 +442,7 @@ def same_author(one, other):
 
 
 def close(ts):
-    if not re.fullmatch(r'\d{10}\.\d{6}', ts):
+    if not TIMESTAMP(ts):
         sys.exit('Not closed: the argument is the ticket\'s timestamp, as printed by --answers (like 1700000000.000100).')
     channel, tok = channel_id(), token()
     ticket = ticket_at(ts, tok, channel)
@@ -485,16 +483,15 @@ def answers(flags):
         open_count += 0 if closed else 1
         last_seen = '0' if show_all else seen.get(ticket['ts'], '0')
         latest = ticket.get('latest_reply', '0')
-        fresh, read = [], False
+        fresh, complete = [], False
         if ticket.get('reply_count') and (show_all or float(latest) > float(last_seen)):
             response = call('conversations.replies', tok, read=True, channel=channel, ts=ticket['ts'], limit=200)
-            thread, more = response.get('messages', [])[1:], response.get('has_more')
+            thread, complete = response.get('messages', [])[1:], not response.get('has_more')
             # The ticket's own Details reply, from its author, is part of the ticket, not an answer (bold or not).
-            read = True
             fresh = [r for r in thread if float(r['ts']) > float(last_seen)
                      and not (same_author(r, ticket) and (r.get('text') or '').lstrip(' *\n').startswith('Details'))]
         if not fresh and not show_all:
-            if read and not more and '--peek' not in flags:  # nothing to show, so the thread need not be read again until it grows
+            if complete and '--peek' not in flags:  # nothing to show, so no need to read it again until it grows
                 seen[ticket['ts']] = latest
             continue
         lines = plain(ticket['text']).split('\n')
@@ -512,7 +509,7 @@ def answers(flags):
             seen[ticket['ts']] = latest
     if not shown:
         print('No new replies.')
-    print(f'{count_tickets(len(tickets))}, {open_count} open.')
+    print(f'{count(len(tickets), "ticket")}, {open_count} open.')
     remember(state)
 
 

@@ -179,10 +179,7 @@ class SourcesTests(TicketsTestCase):
         self.assertNotIn('SECRET TEXT', out)
 
     def test_a_linked_claude_folder_in_the_home_folder_is_fine(self):
-        real = os.path.join(self.tmp, 'real-claude', 'slack-tickets', CHANNEL)
-        os.makedirs(real)
-        with open(os.path.join(real, 'sources.md'), 'w', encoding='utf-8') as out:
-            out.write('Home rows')
+        self.write(f'real-claude/slack-tickets/{CHANNEL}/sources.md', 'Home rows')
         self.link(os.path.join(self.tmp, 'real-claude'), 'home/.claude')
         self.assertIn('Home rows', self.sources())
 
