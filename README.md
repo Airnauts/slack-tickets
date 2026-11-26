@@ -1,6 +1,8 @@
 # slack-tickets
 
-A Claude Code plugin for asking a client questions through a Slack channel.
+An agent skill for asking a client questions through a Slack channel. It ships as a Claude Code plugin, and
+`skills/ticket` follows the open [Agent Skills](https://agentskills.io) format, so other agents that read it can use
+it too.
 
 - One message per question: the question, an urgency, who asked, our own decision, a short context. Nobody is tagged;
   a reviewer tags the right person in the thread.
@@ -10,8 +12,9 @@ A Claude Code plugin for asking a client questions through a Slack channel.
 - When a new document from the client contradicts an earlier one, Claude proposes a ticket for each conflict.
 - A decision we make after a ticket is posted is added to that ticket's thread, so the thread stays the record.
 
-The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up. Each
-time the skill loads it reads the list of open tickets from Slack, so Claude knows what is already asked.
+The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up. The
+first thing the skill does in a session is read the list of open tickets from Slack, so Claude knows what is already
+asked.
 
 ## Install
 
@@ -29,6 +32,11 @@ first command fails with a git error and you use HTTPS, not SSH, for GitHub, sta
 
 To get updates automatically, open `/plugin`, go to Marketplaces, and turn auto-update on for `airnauts`. To update by
 hand: `/plugin marketplace update airnauts`, then `/reload-plugins`.
+
+### Other agents
+
+Copy or symlink `skills/ticket` into the agent's skills folder. For Codex that is `.agents/skills/` in the project,
+or `~/.agents/skills/` for every project.
 
 ## Set up Slack (once per workspace)
 
@@ -57,6 +65,8 @@ Add two variables to the project's `.claude/settings.local.json`. That file is p
 - The channel id is at the bottom of the channel's "About" panel in Slack.
 - To keep the token out of files, leave `SLACK_TICKETS_TOKEN` out and store it in the macOS Keychain:
   `security add-generic-password -U -s slack-tickets -a slack -w` (it asks for the token without showing it).
+
+Another agent has no such file: export the same two variables in the shell it starts from.
 
 Start a new Claude Code session and ask "check the tickets setup". Claude runs the check and says which channel and
 which app it will post as.

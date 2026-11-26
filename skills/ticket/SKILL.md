@@ -10,36 +10,43 @@ A ticket is one question to the client, posted in the project's tickets channel 
 questions: each top-level message is one question, and everything else about it lives in its thread. **Nobody is tagged
 in a ticket**: someone reviews each new ticket and tags the right person in its thread.
 
-## The channel right now
+## The script
 
-Read from Slack when this skill loaded:
+Every command below is the script `scripts/tickets.py` in this skill's own folder (the folder that holds this
+file), run with `python3`. From here on it is written `tickets.py`. Call it by its full path from wherever the
+session is working; do not `cd` into the skill's folder.
 
-!`python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py --list`
+## First: the open tickets
+
+Run `tickets.py --list` before anything else, once per session. It prints one line per open ticket: the question,
+the urgency, who asked, whether anyone but the author has replied, and the ticket's `ts`.
 
 Use this list to answer "what is open", to spot a duplicate before drafting, and to find a ticket's `ts`. It has
-no reply texts: for those run `tickets.py --answers`. It is a snapshot; run `tickets.py --list` again when a long
-session has posted or closed tickets since. If the lines above say the list could not be read, or that shell
-commands are disabled, do the setup check below before anything else.
+no reply texts: for those run `tickets.py --answers`. It is a snapshot; run it again when the session has posted
+or closed tickets since. If it fails, do the setup check below before anything else.
 
 ## Setup check
 
-The script is `python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py`. It reads two environment variables, set under `env` in
-the project's `.claude/settings.local.json`:
+The script reads two environment variables:
 
 - `SLACK_TICKETS_CHANNEL`: the channel's id.
 - `SLACK_TICKETS_TOKEN`: the Slack app's bot token. (Without it the script reads the macOS Keychain, service `slack-tickets`.)
 
-When the list above could not be read, run `tickets.py --check`. It names the channel and whose token it is. If it
-reports something missing, tell the user what, point them at the setup steps in `${CLAUDE_PLUGIN_ROOT}/README.md` and at the Slack app
-manifest, `${CLAUDE_PLUGIN_ROOT}/slack-app-manifest.yaml`, and stop: do not set a token up for them, do not ask
-them to paste one into the chat, and never print the environment (`env`, `printenv`, `echo $SLACK_TICKETS_TOKEN`).
+In Claude Code they are set under `env` in the project's `.claude/settings.local.json`. Any other agent takes them
+from the environment it was started in.
+
+When the list could not be read, run `tickets.py --check`. It names the channel and whose token it is. If it
+reports something missing, tell the user what, point them at the setup steps in the README of
+https://github.com/Airnauts/slack-tickets and at the Slack app manifest there, `slack-app-manifest.yaml`, and stop:
+do not set a token up for them, do not ask them to paste one into the chat, and never print the environment (`env`,
+`printenv`, `echo $SLACK_TICKETS_TOKEN`).
 
 ## Where a project's data lives
 
 **Never write anything into this skill's or the plugin's own folder.** It is an installed copy that every update
 replaces, and it is shared by every project. A project's data has two homes, and nothing else:
 
-- the tickets channel itself, which is the list of what was asked and answered (loaded at the top of this skill;
+- the tickets channel itself, which is the list of what was asked and answered (`tickets.py --list`;
   `tickets.py --answers --all` for the full threads);
 - the project's register of client documents, described under "When a contradiction is found".
 
@@ -130,11 +137,11 @@ the words are the link: `• *Ours:* <https://github.com/acme/app/pull/882|pull 
 ## When a contradiction is found
 
 A client sends many documents, and they do not always agree. A project may keep a register of them, with their dates,
-links, status and who decides what. Look for it at `${CLAUDE_PROJECT_DIR}/.claude/slack-tickets/sources.md`, then at
+links, status and who decides what. Look for it at `.claude/slack-tickets/sources.md` in the project's root, then at
 `~/.claude/slack-tickets/<channel id>/sources.md`. If neither exists and the project has more than a couple of client
-documents, offer to start one from `${CLAUDE_SKILL_DIR}/assets/sources-template.md`. Add a row for every new document
-the moment it arrives. The register holds the client's documents, who decides what, and questions deliberately
-held back or settled without a ticket. It does not list posted tickets.
+documents, offer to start one from `assets/sources-template.md` in this skill's folder. Add a row for every new
+document the moment it arrives. The register holds the client's documents, who decides what, and questions
+deliberately held back or settled without a ticket. It does not list posted tickets.
 
 Whenever new material from the client is read (a brief, an artifact, a document, a Slack message, feedback), compare
 it with what came before: the register's current documents, earlier messages, the approved wording in use, what is
@@ -155,7 +162,7 @@ An assumption of ours that the new material contradicts is asked the same way, w
 
 1. **Collect** the fields. Take what the conversation already holds; ask the user only for what is missing. The
    urgency is the user's to confirm when it was not stated.
-2. **Check for a duplicate** against the list of open tickets at the top of this skill. If one already asks the same
+2. **Check for a duplicate** against the list of open tickets from `tickets.py --list`. If one already asks the same
    thing, propose a reply in its thread instead. Check the register's held-back questions too, if it has one.
 3. **Write the batch** as a JSON file in a scratch folder (never in the plugin or the repo):
    `{"tickets": [{"id": "short-slug", "top": "...", "details": "..."}]}`.
@@ -197,8 +204,8 @@ thread**, so the client reads the current state there and nobody answers a quest
 - the user decided something in conversation that changes what we ask or what we will do;
 - a date in the ticket passed, or its urgency changed.
 
-Whenever such a decision is made in a session, check whether an open ticket is about it (the list at the top) and
-propose the update without being asked. Write it as one short reply:
+Whenever such a decision is made in a session, check whether an open ticket is about it (the list from
+`tickets.py --list`) and propose the update without being asked. Write it as one short reply:
 
 ```
 *Update* (<name>, <date>): <what we decided, in one or two plain sentences>.
