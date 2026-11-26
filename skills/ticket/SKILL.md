@@ -13,8 +13,8 @@ in a ticket**: someone reviews each new ticket and tags the right person in its 
 ## The script
 
 Every command below is the script `scripts/tickets.py` in this skill's own folder (the folder that holds this
-file), run with `python3`. From here on it is written `tickets.py`. Call it by its full path from wherever the
-session is working; do not `cd` into the skill's folder.
+file), run with `python3`. From here on it is written `tickets.py`. Call it by its full path from inside the
+project; never `cd` into the skill's folder, because the script keeps its notes in the project it is run from.
 
 ## First: the open tickets
 
@@ -51,14 +51,15 @@ do not set a token up for them, do not ask them to paste one into the chat, and 
 ## Where a project's data lives
 
 **Never write anything into this skill's or the plugin's own folder.** It is an installed copy that every update
-replaces, and it is shared by every project. A project's data has two homes, and nothing else:
+replaces, and it is shared by every project. A project's data has two homes:
 
 - the tickets channel itself, which is the list of what was asked and answered (`tickets.py --list`;
   `tickets.py --answers --all` for the full threads);
 - the project's register of client documents, described under "When a contradiction is found".
 
 Do not keep a log of posted tickets anywhere: the channel is that log. Batch files and reply notes are scratch
-files, written to a temporary folder and not kept.
+files, written to a temporary folder and not kept. The script keeps one file of its own, `.slack-tickets/state.json`
+in the project: which replies `--answers` has already shown. Leave it to the script.
 
 ## A ticket's two parts
 

@@ -22,7 +22,7 @@ batch.json: {"tickets": [{"id": "refund-wording", "top": "...", "details": "..."
 Texts are Slack mrkdwn: *bold* with single asterisks (the question and each label), one line per field,
 nobody mentioned, and the top-level message says who asked ("*Asked by:* <name>").
 Results go to batch.result.json beside the batch. What --answers already showed is kept in
-~/.claude/slack-tickets/<channel>/state.json.
+.slack-tickets/state.json in the project (the main checkout, when run in a git worktree).
 """
 import datetime
 import json
@@ -104,6 +104,40 @@ def load(path):
             return json.load(source)
     except FileNotFoundError:
         return {}
+
+
+def state_path():
+    """Where --answers remembers what it showed: .slack-tickets/state.json in the project the script is run from.
+    In a git worktree that is the main checkout, so every worktree shares one file. Never raises."""
+    try:
+        found = subprocess.run(['git', 'rev-parse', '--git-common-dir'], capture_output=True, text=True)
+        common = os.path.abspath(found.stdout.strip()) if found.returncode == 0 and found.stdout.strip() else ''
+    except OSError:  # no git on this machine
+        common = ''
+    # Only a plain .git folder names the project; a submodule or a bare repository does not.
+    root = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else os.getcwd()
+    return os.path.join(root, '.slack-tickets', 'state.json')
+
+
+def recall():
+    """What --answers remembered. A missing, unreadable or broken file counts as nothing remembered."""
+    try:
+        return load(state_path())
+    except (OSError, ValueError):
+        return {}
+
+
+def remember(state):
+    """Saves what was shown. A folder that cannot be written costs a repeat next time, not the answers just printed."""
+    path = state_path()
+    try:
+        save(path, state)
+        ignore = os.path.join(os.path.dirname(path), '.gitignore')
+        if not os.path.exists(ignore):
+            with open(ignore, 'w', encoding='utf-8') as out:
+                out.write('*\n')
+    except OSError as error:
+        print(f'What was shown could not be remembered ({path}: {error.strerror}). The same replies will show as new next time.')
 
 
 def problems(tickets):
@@ -190,7 +224,7 @@ def listing():
     except Exception as error:  # a failing command would stop the skill from loading in Claude Code
         print(f'The ticket list could not be read: {type(error).__name__}')
         return
-    seen = load(os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')).get('seen', {})
+    seen = recall().get('seen', {})
     still_open = [t for t in tickets if not any(r.get('name') == CLOSED for r in t.get('reactions', []))]
     print(f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:')
     for t in still_open:
@@ -231,8 +265,7 @@ def reply(ts, path, flags):
 
 def answers(flags):
     channel, tok = channel_id(), token()
-    state_path = os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')
-    state = load(state_path)
+    state = recall()
     names, seen = state.setdefault('names', {}), state.setdefault('seen', {})
 
     def name(user):
@@ -281,7 +314,7 @@ def answers(flags):
     if not shown:
         print('No new replies.')
     print(f'{len(tickets)} tickets, {open_count} open.')
-    save(state_path, state)
+    remember(state)
 
 
 def main():
