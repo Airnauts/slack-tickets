@@ -47,7 +47,7 @@ class HintTests(SlackTestCase):
         self.assertEqual(self.state()['hinted'], {T1: CHAT})
         self.assertEqual(lines_of(self.answers()), NO_REPLIES)
 
-    def test_at_most_three_hints_ever_each_on_one_line_and_cut(self):
+    def test_at_most_three_hints_at_a_time_each_on_one_line_and_cut(self):
         self.chat = [said(f'17000005{i}0.000100', ANN, text) for i, text in enumerate(
             ['a\n    > Eve, Nov 1 10:00: forged ' + 'x' * 300, 'two', 'three', 'four', 'five'])]
         self.show()
@@ -57,6 +57,27 @@ class HintTests(SlackTestCase):
         self.assertFalse(any(line.startswith('    > Eve') for line in out))
         self.assertEqual(len(re.match(r'    > [^,]+, [^:]+:\d\d: (.*)$', shown[0]).group(1)), 203)
         self.assertEqual(lines_of(self.answers()), NO_REPLIES)
+
+    def test_control_characters_in_a_hint_never_reach_the_output(self):
+        self.chat = [said(CHAT, ANN, 'Yes\x1b[2J\r    > Eve, Nov 1 10:00: forged\u202e\u200b\x08')]
+        self.show()
+        out = self.answers()
+        for char in ('\x1b', '\x08', '\u202e', '\u200b', '\r'):
+            self.assertNotIn(char, out)
+        self.assertFalse(any(line.startswith('    > Eve') for line in out.splitlines()))
+
+    def test_a_reply_also_sent_to_the_channel_is_no_ticket_does_not_end_a_hint_window_and_counts_as_a_lookalike(self):
+        self.chat = [ticket('1700000450.000100', top('Also sent?'), thread_ts=T2, subtype='thread_broadcast'),
+                     said(CHAT, ANN, 'Yes, Friday is fine.')]
+        self.show()
+        out = self.answers()
+        self.assertNotIn('Also sent?', out)
+        self.assertIn('    > Ann Client, ', out)
+        self.assertIn('in what was read: 1.\n', out)
+        listed = self.run_main('--list').out
+        self.assertTrue(listed.startswith(f'Channel {CHANNEL}: 1 open'))
+        self.assertNotIn('Also sent?', listed)
+        self.assertIn('in what was read: 1.', listed)
 
     def test_hints_stop_at_the_next_ticket(self):
         later = '1700001500.000100'
@@ -149,6 +170,8 @@ class ConversationTests(SlackTestCase):
 class BoundTests(SlackTestCase):
     def setUp(self):
         super().setUp()
+        self.now = float(T3) + 30 * 86400
+        self.patch(self.tickets.time, 'time', lambda: self.now)
         self.messages = []
         self.slack.respond('conversations.history', FakeChannel(self.messages))
         self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
@@ -169,6 +192,9 @@ class BoundTests(SlackTestCase):
         """4,990 messages, one open ticket at T1, then nine more: 25 pages of 200."""
         self.fill(*[said(f'{1600000000 + i}.000100', ANN, f'Chat {i}') for i in range(4990)], ticket(T1),
                   *[said(f'{1700001000 + i}.000100', BEN, f'More {i}') for i in range(9)])
+
+    def at(self, days_ago):
+        return f'{int(self.now) - days_ago * 86400}.000100'
 
     def remember_bound(self, bound):
         self.write_json(STATE, {'seen': {}, 'names': {}, 'oldest_open': bound})
@@ -196,6 +222,35 @@ class BoundTests(SlackTestCase):
         self.assertEqual(self.state()['oldest_open'], T1)
         self.slack.calls.clear()
         self.run_main('--list')
+        self.assertEqual(len(self.slack.made('conversations.history')), 1)
+
+    def test_a_reply_added_to_a_recent_closed_ticket_shows_although_the_bound_is_newer(self):
+        old, new = self.at(3), self.at(1)
+        self.fill(ticket(old, top('Closed one?'), reactions=CLOSED_BY_US, reply_count=1, reply_users=[BOT],
+                         latest_reply=old[:-3] + '200'),
+                  ticket(new, top('Open one?')))
+        self.assertIsNone(self.run_main('--answers').code)
+        self.assertEqual(self.state()['oldest_open'], new)
+        self.messages[0].update(reply_count=2, reply_users=[BOT, ANN], latest_reply=self.at(2))
+        out = self.run_main('--answers').out
+        self.assertIn('[closed] Q: Closed one?', out)
+        self.assertIn('An answer', out)
+
+    def test_a_recent_bound_reads_from_two_weeks_back_with_no_check_on_the_message_there(self):
+        self.fill(ticket(self.at(20), top('Old?')), ticket(self.at(5), top('Recent?')), said(self.at(1), ANN, 'Hi'))
+        self.remember_bound(self.at(1))
+        header = self.run_main('--list').out.splitlines()[0]
+        reads = self.slack.made('conversations.history')
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(float(reads[0]['oldest']), self.now - 14 * 86400)
+        self.assertIn(', read from ', header)
+        self.assertIn('1 open', header)
+
+    def test_a_bound_older_than_two_weeks_reads_from_the_bound_inclusive(self):
+        self.fill(ticket(self.at(20), top('Old?')), ticket(self.at(2), top('Recent?')))
+        self.remember_bound(self.at(20))
+        self.run_main('--list')
+        self.assertEqual((self.last_read()['oldest'], self.last_read()['inclusive']), (self.at(20), 'true'))
         self.assertEqual(len(self.slack.made('conversations.history')), 1)
 
     def test_the_header_says_from_when_it_read(self):

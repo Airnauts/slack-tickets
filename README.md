@@ -81,18 +81,22 @@ is left out, and `--list` and `--answers` say how many there were.
 
 A ticket is closed by a check mark from its author or from the app's own token. Anyone else's check mark, a client's
 "seen" for example, leaves it open. A ticket the app posted and a person closed by hand from their own account shows as
-open again; `tickets.py --close <ts>` settles it.
+open again; Claude tells you, and closes it with `tickets.py --close <ts>` on your go.
 
-When a client answers in the channel instead of the thread, `--answers` shows up to three messages posted after an
-unanswered ticket, once each, marked as not in its thread. Claude treats them as hints and asks for the answer in the
-thread.
+When a client answers in the channel instead of the thread, `--answers` shows up to three messages at a time posted
+after an unanswered ticket, each shown once, marked as not in its thread. Claude treats them as hints and asks for the
+answer in the thread.
 
 When the channel also carries conversation, `--list` says so, and Claude ends each new ticket with one line asking for
 the answer in its thread. Tickets in a channel of their own do not change.
 
-`--list` and `--answers` read the channel only from the oldest ticket that was open at the last `--answers`. A ticket
-closed long ago and opened again by removing its check mark is not seen until `tickets.py --answers --all`, which reads
-everything and starts over.
+After the first `tickets.py --answers`, the script reads the channel from the oldest ticket that was open at the last
+check, and never less than the last two weeks. It cannot see a ticket closed before that and opened again by removing
+its check mark, or a reply added to a ticket that was closed more than two weeks ago. `tickets.py --answers --all`
+reads everything and starts over.
+
+A ticket that was not posted by the app, but from a person's account, is marked so in `--list` and `--answers`: anyone
+in the channel can post a message shaped like a ticket.
 
 ## The script
 

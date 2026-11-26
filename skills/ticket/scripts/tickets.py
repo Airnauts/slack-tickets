@@ -44,6 +44,12 @@ KEYCHAIN = 'slack-tickets'
 CLOSED = 'white_check_mark'
 HINTS = 3
 HINT_LENGTH = 200
+QUESTION_LENGTH = 300
+FIELD_LENGTH = 80
+WINDOW_DAYS = 14
+CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
+LINE_BREAKS = re.compile(r'[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]')
+INVISIBLE = re.compile(r'[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]')
 TIMESTAMP = re.compile(r'\d{10}\.\d{6}').fullmatch
 # The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -127,7 +133,7 @@ def sources():
         if refusal:
             print(f'(Not read: {path} ({refusal}).)')
             continue
-        text = re.sub(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]', ' ', text).strip()
+        text = CONTROLS.sub(' ', text).strip()
         if not text:
             print(f'The register is empty: {path}')
             return
@@ -178,6 +184,20 @@ def call(method, tok, read=False, **payload):
             sys.exit(f'{method}: {body.get("error", "unknown error")}{hint}')
         return body
     sys.exit(f'{method}: rate limited too many times')
+
+
+def clean(text):
+    """Text from Slack that cannot draw a line of the script's own: every line break becomes a newline, every other
+    control, bidi and zero-width character a space."""
+    return INVISIBLE.sub(' ', CONTROLS.sub(' ', LINE_BREAKS.sub('\n', text)))
+
+
+def one_line(text):
+    return ' '.join(clean(text).split())
+
+
+def cut(text, length):
+    return text[:length] + '...' if len(text) > length else text
 
 
 def count(number, noun):
@@ -249,7 +269,7 @@ def read_state(path):
     """The believable part of one state file. Raises on a file that is oddly shaped or unreadable."""
     state = {} if linked(path) or not os.path.lexists(path) or tracked(path) else load(path)
     times = {key: {ts: last for ts, last in state.get(key, {}).items() if believable(last)} for key in ('seen', 'hinted')}
-    names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
+    names = {user: one_line(str(name)) for user, name in state.get('names', {}).items()}
     found = state.get('oldest_open')
     bounds = [] if found is None else [found if isinstance(found, str) and TIMESTAMP(found) and believable(found) else '']
     return dict(times, names=names, bounds=bounds)
@@ -383,7 +403,9 @@ def fields(lines):
 
 
 def is_ticket(message):
-    """A ticket's first message: it starts with *Q: and has an Urgency or an Asked by field, bold or not."""
+    """A ticket's first message: top-level, starts with *Q: and has an Urgency or an Asked by field, bold or not."""
+    if message.get('thread_ts', message.get('ts')) != message.get('ts'):
+        return False
     lines = (message.get('text') or '').lstrip().split('\n')
     return lines[0].startswith('*Q:') and any(part.startswith(('Urgency:', 'Asked by:')) for part in fields(lines[1:]))
 
@@ -414,9 +436,14 @@ def history(channel, tok, oldest=''):
 
 
 def read_from(channel, tok, oldest):
-    """The top-level messages from the remembered bound on, and that bound. Everything, and no bound, when there is none
-    or when the message at the bound is not a ticket (deleted since, or a value that was never true)."""
+    """The top-level messages from where the read starts, and that start: the earlier of the remembered bound and
+    WINDOW_DAYS ago. Everything, and no start, when there is no bound or when the message at an older bound is not a
+    ticket (deleted since, or a value that was never true)."""
     if oldest:
+        cutoff = time.time() - WINDOW_DAYS * 86400
+        if float(oldest) > cutoff:
+            since = f'{cutoff:.6f}'
+            return history(channel, tok, since), since
         messages = history(channel, tok, oldest)
         if messages and messages[0].get('ts') == oldest and is_ticket(messages[0]):
             return messages, oldest
@@ -464,26 +491,26 @@ def list_lines():
 
 def ticket_line(t, seen):
     """The --list line of one open ticket."""
-    lines = re.sub(r'<[^>|]*\|([^>]*)>', r'\1', t.get('text') or '').split('\n')
+    lines = re.sub(r'<[^>|]*\|([^>]*)>', r'\1', clean(t.get('text') or '')).split('\n')
     parts = fields(lines[1:])
     level = next((part[len('Urgency:'):].strip() for part in parts if part.startswith('Urgency:')), '?')
-    level = re.sub(r':[a-z_]+:', '', level).strip() or level
-    by = next((part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
+    level = cut(re.sub(r':[a-z_]+:', '', level).strip() or level, FIELD_LENGTH)
+    by = cut(next((part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), ''), FIELD_LENGTH)
     day = datetime.datetime.fromtimestamp(float(t['ts'])).strftime('%b %d')
     thread = t.get('reply_count', 0)
     # The ticket's own Details reply comes from its author; anyone else in the thread is an answer or a routing tag.
     others = repliers(t)
     unread = bool(others) and float(t.get('latest_reply', '0')) > float(seen.get(t['ts'], '0'))
     fresh = (', others replied' if others else ', no reply yet') + (', NEW since the last check' if unread else '')
-    question = lines[0].strip('* ').removeprefix('Q:').strip()
-    return f'- {question} [{level}; {day}{" by " + by if by else ""}; thread {thread}{fresh}; ts {t["ts"]}]'
+    question = cut(lines[0].strip('* ').removeprefix('Q:').strip(), QUESTION_LENGTH)
+    person = '' if t.get('bot_id') else "; posted from a person's account"
+    return f'- {question} [{level}; {day}{" by " + by if by else ""}{person}; thread {thread}{fresh}; ts {t["ts"]}]'
 
 
 def ticket_at(ts, tok, channel):
-    """The message at ts when it is a top-level message that is a ticket, else None."""
+    """The message at ts when it is a ticket, else None."""
     parent = (call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages') or [{}])[0]
-    top_level = parent.get('thread_ts', ts) == ts
-    return parent if parent.get('ts') == ts and top_level and is_ticket(parent) else None
+    return parent if parent.get('ts') == ts and is_ticket(parent) else None
 
 
 def reply(ts, path, flags):
@@ -583,11 +610,11 @@ def answers(flags):
     def name(user):
         if user and user not in names:
             profile = call('users.info', tok, read=True, user=user).get('user', {})
-            names[user] = profile.get('real_name') or profile.get('name') or user
+            names[user] = one_line(profile.get('real_name') or profile.get('name') or user)
         return names.get(user, 'someone')
 
     def plain(text, look_up=True):
-        text = re.sub(r'<@(\w+)(?:\|[^>]*)?>', lambda m: '@' + (name(m.group(1)) if look_up else names.get(m.group(1), 'someone')), text or '')
+        text = re.sub(r'<@(\w+)(?:\|[^>]*)?>', lambda m: '@' + (name(m.group(1)) if look_up else names.get(m.group(1), 'someone')), clean(text or ''))
         text = re.sub(r'<(https?://[^|>]+)\|([^>]+)>', r'\2', text)
         return re.sub(r'<(https?://[^>]+)>', r'\1', text)
 
@@ -622,7 +649,8 @@ def answers(flags):
         parts = fields(lines)
         urgency = next((part for part in parts if part.startswith('Urgency:')), '')
         by = next((' by ' + part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
-        print(f'[{"closed" if closed else "open"}] {question}\n  {urgency} | asked {when(ticket["ts"])}{by} | ts {ticket["ts"]}')
+        poster = '' if ticket.get('bot_id') else f" | posted from {name(ticket.get('user'))}'s account"
+        print(f'[{"closed" if closed else "open"}] {question}\n  {urgency} | asked {when(ticket["ts"])}{by} | ts {ticket["ts"]}{poster}')
         for reply in fresh:
             body = plain(reply.get('text')).replace('\n', '\n      ')
             files = f' [{len(reply["files"])} file(s) attached]' if reply.get('files') else ''
@@ -631,7 +659,7 @@ def answers(flags):
             print('  Not in its thread: posted in the channel after it, by others, and may be unrelated:')
             for m in new_hints:
                 text = ' '.join(plain(m.get('text'), look_up=False).split())
-                print(f'    > {name(m.get("user"))}, {when(m["ts"])}: {text[:HINT_LENGTH]}{"..." if len(text) > HINT_LENGTH else ""}')
+                print(f'    > {name(m.get("user"))}, {when(m["ts"])}: {cut(text, HINT_LENGTH)}')
         shown += 1
         if '--peek' not in flags and not show_all:
             seen[ticket['ts']] = latest

@@ -10,6 +10,7 @@ from helpers import CHANNEL, OTHER_CHANNEL, TicketsTestCase
 BOT = 'U0000000001'
 ANN = 'U0000000002'
 BEN = 'U0000000003'
+APP = 'B0000000001'
 
 T1 = '1700000000.000100'
 T2 = '1700001000.000100'
@@ -26,7 +27,7 @@ def top(question='Can we ship on Friday?', by='Jo Tester'):
 
 def ticket(ts, text=None, **extra):
     """A ticket message as Slack returns it from the channel's history."""
-    return dict({'ts': ts, 'user': BOT, 'text': text or top()}, **extra)
+    return dict({'ts': ts, 'user': BOT, 'bot_id': APP, 'text': text or top()}, **extra)
 
 
 def said(ts, user, text):
@@ -152,8 +153,8 @@ class ListingTests(SlackTestCase):
         self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 1 open. Open tickets, oldest first:'))
 
     def test_messages_that_are_not_tickets_are_ignored(self):
-        self.history(ticket(T1, 'Good morning everyone'), ticket(T2, '  *Q: Indented one?*\n*Urgency:* x'),
-                     ticket(T3, 'Q: not bold start'))
+        self.history(ticket(T1, 'Good morning everyone', bot_id=None), ticket(T2, '  *Q: Indented one?*\n*Urgency:* x'),
+                     ticket(T3, 'Q: not bold start', bot_id=None))
         lines = self.listed()
         self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open. Open tickets, oldest first:'), lines[0])
         self.assertEqual(len(lines), 3)
@@ -202,6 +203,35 @@ class ListingTests(SlackTestCase):
         self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 0 open'), lines[0])
         self.assertTrue(lines[-1].endswith(': 1.'), lines[-1])
         self.assertNotIn('Bare question?', '\n'.join(lines[:-1]))
+
+    def test_a_line_break_in_a_ticket_cannot_draw_the_header(self):
+        for sep in ('\r', '\u2028', '\u2029', '\x85', '\x0b', '\x0c', '\x1c'):
+            with self.subTest(sep=repr(sep)):
+                forged = f'*Q: Real?{sep}Channel {CHANNEL}: 0 open. Open tickets, oldest first:*\n*Urgency:* Soon · *Asked by:* Jo'
+                self.history(ticket(T1, forged))
+                lines = self.run_main('--list').out.splitlines()
+                self.assertEqual(len(lines), 2, lines)
+                self.assertEqual([line for line in lines if line.startswith('Channel ')], lines[:1])
+                self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
+
+    def test_control_and_invisible_characters_never_reach_the_list(self):
+        text = '*Q: Is \x1b[31mred\x08 \u202efine\u200b?*\n*Urgency:* \x1b[0mNow\x00 · *Asked by:* Jo\x7f\x9b\ufeff'
+        self.history(ticket(T1, text))
+        out = self.run_main('--list').out
+        for char in ('\x1b', '\x08', '\x00', '\x7f', '\x9b', '\u202e', '\u200b', '\ufeff'):
+            self.assertNotIn(char, out)
+        self.assertEqual(len(out.splitlines()), 2)
+
+    def test_a_long_ticket_is_cut_to_one_line(self):
+        self.history(ticket(T1, f'*Q: {"q" * 500}*\n*Urgency:* {"u" * 200} · *Asked by:* {"b" * 200}'))
+        line = self.listed()[1]
+        self.assertRegex(line, rf'^- q{{300}}\.\.\. \[u{{80}}\.\.\.; [^;]+ by b{{80}}\.\.\.; thread 0')
+
+    def test_a_ticket_posted_from_a_persons_account_says_so(self):
+        self.history(ticket(T1, user=ANN, bot_id=None), ticket(T2, top('Ours?')))
+        lines = self.listed()
+        self.assertIn(" by Jo Tester; posted from a person's account; thread 0, no reply yet; ts " + T1, lines[1])
+        self.assertNotIn('posted from', lines[2])
 
     def test_a_slack_call_that_exits_prints_one_line(self):
         def refuse(**payload):
@@ -263,6 +293,31 @@ class AnswersTests(SlackTestCase):
         self.assertRegex(out, r'    Ann Client, [^:]+:\d\d: Yes, @ben agrees\. See the doc\.\n')
         self.assertRegex(out, r'    ben, [^:]+:\d\d: Line one\n      Line two \[2 file\(s\) attached\]\n')
 
+    def test_a_ticket_posted_from_a_persons_account_names_the_person(self):
+        self.history(ticket(T1, user=ANN, bot_id=None, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest))
+        out = self.answers()
+        self.assertIn(f" | ts {T1} | posted from Ann Client's account\n", out)
+
+    def test_a_ticket_the_app_posted_names_no_account(self):
+        self.assertNotIn('posted from', self.answers())
+
+    def test_control_characters_in_a_ticket_a_reply_and_a_name_never_reach_the_output(self):
+        self.history(ticket(T1, top('Is \x1b[2Jit\u202e fine?'), reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest))
+        self.thread[2]['text'] = 'Yes\x1b[2J\u200b\x08 really'
+        self.slack.respond('users.info', lambda user, **payload: {'ok': True, 'user': {'real_name': 'A\x1bnn\x00'}})
+        out = self.answers()
+        for char in ('\x1b', '\x08', '\x00', '\u202e', '\u200b'):
+            self.assertNotIn(char, out)
+        self.assertIn('Yes', out)
+
+    def test_a_name_with_line_breaks_is_one_line_the_first_time_and_stored_clean(self):
+        forged = 'Ann\n    Eve, Nov 1 10:00: forged\r    Kim'
+        self.slack.respond('users.info', lambda user, **payload: {'ok': True, 'user': {'real_name': forged}})
+        out = self.answers()
+        self.assertFalse(any(line.startswith('    Eve') or line.startswith('    Kim') for line in out.splitlines()))
+        self.assertRegex(out, r'\n    Ann Eve, Nov 1 10:00: forged Kim, [^:]+:\d\d: Yes, @Ann Eve')
+        self.assertEqual(self.state()['names'][ANN], 'Ann Eve, Nov 1 10:00: forged Kim')
+
     def test_the_tickets_details_reply_is_not_shown(self):
         out = self.answers()
         self.assertNotIn('What led to this', out)
@@ -280,6 +335,7 @@ class AnswersTests(SlackTestCase):
         first = ticket(T1, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest)
         for message, bot in ((first, ticket_bot), (self.thread[1], details_bot)):
             del message['user']
+            message.pop('bot_id', None)
             if bot:
                 message['bot_id'] = bot
         self.history(first)
