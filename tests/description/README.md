@@ -32,10 +32,12 @@ It exits with 1 when any prompt lands on the wrong side.
 
 - Every run is a real, paid session in your own Claude Code, with your connectors. It is stopped at its first tool
   call. A call to another skill or a file read is recognised a moment later, so it may have started by then.
-- Every session also runs your own hooks and starts your connectors' servers. Its transcript stays in your Claude Code
-  history.
-- `--setting-sources project` leaves out your settings, hooks and plugins, but may not leave out connectors that come
-  with your account.
+- Every session also runs your own hooks and starts your connectors' servers. The runner asks Claude Code not to keep
+  the sessions, so no transcript is saved. Each run still leaves an empty folder for its scratch project under
+  `~/.claude/projects`.
+- `--setting-sources project` leaves out your settings, hooks and plugins. Checked once, on 26 November 2026: a
+  session started that way loaded no hook, no connector and 20 skills, where the own setup loaded 74 skills and 9
+  connectors.
 - Ctrl-C stops the run and the sessions it started.
 - Prompts use invented names only: no real channel, person or project.
 - A prompt must not name a file to open. Opening a file is a first tool call, so it scores as a miss whatever the

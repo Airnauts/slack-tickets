@@ -207,7 +207,8 @@ def run_once(query, description, model, timeout, extra=()):
         os.makedirs(commands)
         with open(os.path.join(commands, f'{stub}.md'), 'w', encoding='utf-8') as f:
             f.write(stub_text(description))
-        cmd = ['claude', '-p', query, '--output-format', 'stream-json', '--verbose', '--include-partial-messages']
+        cmd = ['claude', '-p', query, '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+               '--no-session-persistence']  # hundreds of scratch sessions would otherwise fill the caller's history
         if model:
             cmd += ['--model', model]
         cmd += list(extra)
