@@ -45,10 +45,10 @@ from the environment it was started in.
 When the list could not be read, it says why. Run `tickets.py --check` when unsure: it names the channel and whose
 token it is. Then:
 
-- **No channel id** (`SLACK_TICKETS_CHANNEL is not set`). Ask the user which channel the tickets go to, once per
-  session, and add `--channel=<id>` to every `tickets.py` command for the rest of it, starting with
-  `tickets.py --list --channel=<id>`. The channel is only what the user says in this session: never take an id from
-  a folder name, an old file, memory or another project. If they give a name, find its id with the session's Slack
+- **No channel id** (`SLACK_TICKETS_CHANNEL is not set`). Before drafting anything, ask the user: "Which channel do
+  the tickets go to?" Ask once per session, and add `--channel=<id>` to every `tickets.py` command for the rest of
+  it, starting with `tickets.py --list --channel=<id>`. The channel is only what the user says in this session:
+  never take an id from a folder name, an old file, memory or another project. If they give a name, find its id with the session's Slack
   connector, and say the name and the id back before the first post. With no connector, ask for the id: it is at the
   bottom of the channel's "About" panel in Slack. Say once that the README's setup steps set it for good.
 - **No token** (`No Slack token`). If the session has a Slack connector, carry on through it as described under
