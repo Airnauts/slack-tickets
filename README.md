@@ -68,7 +68,10 @@ which replies it has shown.
 A project with many client documents can keep a register of them, so Claude compares new material against the current
 ones. Put it at `.claude/slack-tickets/sources.md` in the project, or at `~/.claude/slack-tickets/<channel id>/sources.md`
 to keep it on your machine. A template is in
-[`skills/ticket/assets/sources-template.md`](skills/ticket/assets/sources-template.md).
+[`skills/ticket/assets/sources-template.md`](skills/ticket/assets/sources-template.md). Claude gets it with
+`tickets.py --sources-template`. Claude reads it with `tickets.py --sources`. That command needs no go from you, also for
+the register in your home folder. It prints at most 1 MB, and nothing when the register or its folder is a link. In a
+git worktree it also finds a register that is only in the main checkout.
 
 ## The script
 
@@ -77,6 +80,8 @@ Claude runs it for you. By hand, with the two variables set (`--setup` needs nei
 ```
 python3 skills/ticket/scripts/tickets.py --check               which channel, whose token
 python3 skills/ticket/scripts/tickets.py --setup               the setup steps and the Slack app manifest
+python3 skills/ticket/scripts/tickets.py --sources-template    the template for the register of client documents
+python3 skills/ticket/scripts/tickets.py --sources             the register of client documents, if there is one
 python3 skills/ticket/scripts/tickets.py --list                one line per open ticket
 python3 skills/ticket/scripts/tickets.py batch.json            dry run
 python3 skills/ticket/scripts/tickets.py batch.json --post     post the batch
@@ -87,8 +92,18 @@ python3 skills/ticket/scripts/tickets.py --close <ts>          mark a ticket clo
 python3 skills/ticket/scripts/tickets.py --list --channel=C0123456789   a channel for one run, when none is set
 ```
 
+In Claude Code the skill lets only the commands that post nothing to Slack run without asking: `--list`,
+`--answers`, `--check`, `--setup`, `--sources-template` and `--sources`. A dry run, a post, a reply, a close, and
+anything with `--channel=<id>` ask you first. When Claude Code asks, answer yes for that one command. "Don't ask
+again" saves a rule that covers every `tickets.py` command, a post included. Your own permission rules come before the
+skill's: a rule of yours that allows every `python3` command makes all of them run without asking.
+
 It needs Python 3 and nothing else. It remembers which replies it has shown in `.slack-tickets/state.json` in the
 project, a folder it creates and keeps out of git. Git worktrees share the main checkout's file.
+
+An agent whose sandbox may not write to the main checkout keeps its own copy in its worktree, so a reply repeats once
+per worktree at most. To share it, add the main checkout's `.slack-tickets` folder to the folders the sandbox may
+write.
 
 ## Developing
 

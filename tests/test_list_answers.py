@@ -202,11 +202,69 @@ class AnswersTests(SlackTestCase):
         self.thread[1]['text'] = 'Details\nWhat led to this.'
         self.assertNotIn('What led to this', self.answers())
 
+    def test_a_reply_from_someone_else_that_starts_with_details_is_an_answer(self):
+        self.thread[2]['text'] = 'Details are fine, go ahead.'
+        self.assertIn('Details are fine, go ahead.', self.answers())
+
+    def authored_by_bots(self, ticket_bot, details_bot):
+        """The ticket and its Details reply as bot messages without a user; None leaves out the bot id."""
+        first = ticket(T1, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest)
+        for message, bot in ((first, ticket_bot), (self.thread[1], details_bot)):
+            del message['user']
+            if bot:
+                message['bot_id'] = bot
+        self.history(first)
+
+    def test_a_details_reply_from_the_same_bot_without_a_user_is_skipped(self):
+        self.authored_by_bots('B0000000001', 'B0000000001')
+        self.assertNotIn('What led to this', self.answers())
+
+    def test_a_details_reply_from_another_bot_is_an_answer(self):
+        self.authored_by_bots('B0000000001', 'B0000000002')
+        self.assertIn('What led to this', self.answers())
+
+    def test_messages_without_a_user_or_bot_id_do_not_share_an_author(self):
+        self.authored_by_bots(None, None)
+        self.assertIn('What led to this', self.answers())
+
     def test_a_ticket_with_only_its_details_reply_shows_nothing(self):
         self.thread = self.thread[:2]
         out = self.answers()
         self.assertIn('No new replies.', out)
         self.assertNotIn('[open]', out)
+
+    def only_details(self):
+        self.thread = self.thread[:2]
+        self.history(ticket(T1, reply_count=1, reply_users=[BOT], latest_reply='1700000100.000100'))
+
+    def test_a_ticket_with_only_its_details_reply_is_not_read_again(self):
+        self.only_details()
+        self.answers()
+        self.assertEqual(self.state()['seen'], {T1: '1700000100.000100'})
+        self.slack.calls.clear()
+        self.assertEqual(lines_of(self.answers()), ['No new replies.', '1 ticket, 1 open.'])
+        self.assertEqual(self.slack.made('conversations.replies'), [])
+
+    def test_a_thread_served_in_two_pages_is_read_to_its_end(self):
+        pages = {None: {'ok': True, 'messages': self.thread[:2], 'response_metadata': {'next_cursor': 'page2'}},
+                 'page2': {'ok': True, 'messages': self.thread[2:], 'response_metadata': {'next_cursor': ''}}}
+        self.slack.respond('conversations.replies', lambda cursor=None, **payload: pages[cursor])
+        out = self.answers()
+        self.assertIn('Line two', out)
+        self.assertEqual([c.get('cursor') for c in self.slack.made('conversations.replies')], [None, 'page2'])
+        self.assertEqual(self.state()['seen'], {T1: self.latest})
+
+    def test_a_thread_of_one_page_is_read_with_one_call(self):
+        self.answers()
+        self.assertEqual(len(self.slack.made('conversations.replies')), 1)
+        self.assertNotIn('cursor', self.slack.made('conversations.replies')[0])
+
+    def test_peek_and_all_do_not_remember_a_ticket_with_only_its_details_reply(self):
+        self.only_details()
+        for flag in ('--peek', '--all'):
+            with self.subTest(flag=flag):
+                self.answers(flag)
+                self.assertEqual(self.state()['seen'], {})
 
     def test_the_last_line_counts_tickets_and_open_ones(self):
         self.assertEqual(lines_of(self.answers())[-1], '2 tickets, 1 open.')
@@ -324,6 +382,18 @@ class ReplyTests(SlackTestCase):
                 self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
                 self.assertEqual(self.slack.methods(), ['conversations.replies'])
 
+    def test_an_empty_answer_is_not_a_ticket(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': []})
+        result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
+        self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
+        self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_a_reply_in_a_thread_is_refused_even_when_it_reads_like_a_ticket(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, thread_ts=T2)]})
+        result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
+        self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
+        self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
     def test_a_reply_to_a_ticket_is_posted_in_its_thread(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1)]})
         self.slack.respond('chat.postMessage', {'ok': True, 'ts': '1700000900.000100', 'channel': CHANNEL})
@@ -362,6 +432,12 @@ class PostTests(SlackTestCase):
         self.assertEqual(lines_of(result.out)[-1], f'Dry run: 2 tickets for {CHANNEL}, nothing posted. Add --post to post.')
         self.assertEqual(self.slack.calls, [])
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'batch.result.json')))
+
+    def test_one_ticket_is_not_plural(self):
+        self.fake_post()
+        path = self.batch([{'id': 'ship-friday', 'top': top(), 'details': 'x'}])
+        self.assertEqual(lines_of(self.run_main(path).out)[-1], f'Dry run: 1 ticket for {CHANNEL}, nothing posted. Add --post to post.')
+        self.assertIn('Posted 1 ticket. Results: ', lines_of(self.run_main(path, '--post').out)[-1])
 
     def test_a_dry_run_marks_what_is_already_posted(self):
         path = self.batch()
@@ -484,12 +560,60 @@ class PostTests(SlackTestCase):
 
 
 class MainTests(SlackTestCase):
-    def test_close_adds_the_check_mark_reaction(self):
+    def test_close_adds_the_check_mark_reaction_to_a_ticket(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, reactions=[{'name': 'eyes', 'count': 1}])]})
         self.slack.respond('reactions.add', {'ok': True})
         result = self.run_main('--close', T1)
         self.assertIsNone(result.code)
         self.assertEqual(result.out, f'Closed {T1}.\n')
+        self.assertEqual(self.slack.methods(), ['conversations.replies', 'reactions.add'])
+        self.assertEqual(self.slack.made('conversations.replies')[0]['ts'], T1)
         self.assertEqual(self.slack.made('reactions.add'), [{'channel': CHANNEL, 'timestamp': T1, 'name': 'white_check_mark'}])
+
+    def test_close_adds_nothing_to_a_ticket_that_is_already_closed(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [
+            ticket(T1, reactions=[{'name': 'white_check_mark', 'count': 1}])]})
+        result = self.run_main('--close', T1)
+        self.assertIsNone(result.code)
+        self.assertEqual(result.out, f'Already closed {T1}.\n')
+        self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_close_refuses_a_malformed_timestamp_before_any_call(self):
+        for ts in ('123', '1700000000', 'abc.def', '1700000000.000100x'):
+            with self.subTest(ts=ts):
+                result = self.run_main('--close', ts)
+                self.assertEqual(result.code, "Not closed: the argument is the ticket's timestamp, as printed by --answers (like 1700000000.000100).")
+                self.assertEqual(self.slack.calls, [])
+
+    def test_close_refuses_a_message_that_is_not_a_ticket(self):
+        parents = {
+            'chatter': {'ts': T1, 'text': 'Good morning'},
+            'a reply inside a thread': {'ts': T2, 'text': '*Q: Something?*'},
+        }
+        for why, parent in parents.items():
+            with self.subTest(why=why):
+                self.slack.calls.clear()
+                self.slack.respond('conversations.replies', {'ok': True, 'messages': [parent]})
+                result = self.run_main('--close', T1)
+                self.assertEqual(result.code, 'Not closed: that timestamp is not a ticket in this channel.')
+                self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_close_refuses_an_empty_answer(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': []})
+        result = self.run_main('--close', T1)
+        self.assertEqual(result.code, 'Not closed: that timestamp is not a ticket in this channel.')
+        self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_close_refuses_a_reply_in_a_thread_even_when_it_reads_like_a_ticket(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, thread_ts=T2)]})
+        result = self.run_main('--close', T1)
+        self.assertEqual(result.code, 'Not closed: that timestamp is not a ticket in this channel.')
+        self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_close_accepts_a_ticket_that_is_its_own_thread_root(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, thread_ts=T1)]})
+        self.slack.respond('reactions.add', {'ok': True})
+        self.assertEqual(self.run_main('--close', T1).out, f'Closed {T1}.\n')
 
     def test_close_needs_the_channel(self):
         del os.environ['SLACK_TICKETS_CHANNEL']
@@ -508,12 +632,26 @@ class MainTests(SlackTestCase):
         result = self.run_main()
         self.assertIn('dry run: prints what would be posted', result.code)
 
-    # The script treats `--reply <ts>` without a note file as a batch file named <ts>: a dry run of 0 tickets, exit 0.
-    @unittest.expectedFailure
     def test_a_reply_without_its_note_file_prints_the_usage(self):
         result = self.run_main('--reply', T1)
         self.assertEqual(result.code, self.tickets.__doc__)
         self.assertEqual(self.slack.calls, [])
+
+    def test_a_reply_or_a_close_with_the_wrong_arguments_prints_the_usage(self):
+        note = self.write('note.txt', 'Fine text')
+        wrong = {
+            'a reply with --post and no note file': ('--reply', T1, '--post'),
+            'a reply with no arguments': ('--reply',),
+            'a reply with too many arguments': ('--reply', T1, note, 'extra'),
+            'a close with no timestamp': ('--close',),
+            'a close with two timestamps': ('--close', T1, T2),
+        }
+        for why, argv in wrong.items():
+            with self.subTest(why=why):
+                result = self.run_main(*argv)
+                self.assertEqual(result.code, self.tickets.__doc__)
+                self.assertEqual(result.out, '')
+                self.assertEqual(self.slack.calls, [])
 
     def test_the_channel_flag_works_in_process_too(self):
         del os.environ['SLACK_TICKETS_CHANNEL']
