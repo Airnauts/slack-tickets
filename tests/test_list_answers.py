@@ -8,7 +8,7 @@ import re
 import sys
 import unittest
 
-from helpers import CHANNEL, OTHER_CHANNEL, TicketsTestCase
+from helpers import ARABIC_INDIC_TS, CHANNEL, OTHER_CHANNEL, TicketsTestCase
 
 BOT = 'U0000000001'
 ANN = 'U0000000002'
@@ -242,6 +242,20 @@ class ListingTests(SlackTestCase):
         line = self.listed()[1]
         self.assertRegex(line, rf'^- q{{300}}\.\.\. \[u{{80}}\.\.\.; [^;]+ by b{{80}}\.\.\.; thread 0')
 
+    def test_what_a_person_cannot_see_never_reaches_the_list(self):
+        hidden = ['\U000e0001', '\U000e0020', '\U000e0041', '\U000e007f', '\u00ad', '\u061c', '\u180e', '\u206a', '\ufff9',
+                  '\ufe00', '\ufe0f', '\U000e0100', '\U000e01ef', '\ue000']
+        junk = ''.join(hidden)
+        self.history(ticket(T1, f'*Q: Café zażółć{junk}?*\n*Urgency:* \U0001f534{junk} Blocking · *Asked by:* Jo{junk}'))
+        line = self.listed()[1]
+        for char in hidden:
+            self.assertNotIn(char, line)
+        self.assertIn('- Café zażółć', line)
+        self.assertIn('[\U0001f534', line)
+
+    def test_clean_keeps_tabs_and_new_lines_and_blanks_every_other_control(self):
+        self.assertEqual(self.tickets.clean('a\tb\nc\rd\u2028e\x00f\x9fg\u2029h'), 'a\tb\nc\nd\ne f g\nh')
+
     def test_a_ticket_posted_from_a_persons_account_says_so(self):
         self.history(ticket(T1, user=ANN, bot_id=None), ticket(T2, top('Ours?')))
         lines = self.listed()
@@ -329,10 +343,54 @@ class AnswersTests(SlackTestCase):
     def test_a_ticket_posted_from_a_persons_account_names_the_person(self):
         self.history(ticket(T1, user=ANN, bot_id=None, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest))
         out = self.answers()
-        self.assertIn(f" | ts {T1} | posted from Ann Client's account\n", out)
+        self.assertIn(f" | ts {T1} | posted from a person's account (Ann Client)\n", out)
+
+    def posted_by(self, real_name):
+        self.history(ticket(T1, user=ANN, bot_id=None, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest))
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': real_name}})
+        return self.answers()
+
+    def test_the_fixed_phrase_comes_before_the_posters_own_name(self):
+        out = self.posted_by('the Tickets app')
+        self.assertIn(f" | ts {T1} | posted from a person's account (the Tickets app)\n", out)
+
+    def test_a_poster_whose_name_is_all_blanked_characters_shows_the_user_id(self):
+        out = self.posted_by('\u200b\u2060\U000e0041')
+        self.assertIn(f" | ts {T1} | posted from a person's account ({ANN})\n", out)
 
     def test_a_ticket_the_app_posted_names_no_account(self):
         self.assertNotIn('posted from', self.answers())
+
+    def test_the_fields_of_a_ticket_are_cut_as_in_the_list_and_the_real_marker_stays_near_the_start(self):
+        fake = f' | ts {T3} | posted from Eve'
+        text = f'*Q: {"q" * 500}*\n*Urgency:* {"u" * 200}{fake} · *Asked by:* {"b" * 500}{fake}'
+        self.history(ticket(T1, text, user=ANN, bot_id=None, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest))
+        out = lines_of(self.answers())
+        self.assertEqual(out[0], f'[open] Q: {"q" * 297}...')
+        line = out[1]
+        self.assertIn(f'Urgency: {"u" * 71}... | asked ', line)
+        self.assertIn(f' by {"b" * 80}... | ts {T1} | posted from a person\'s account (Ann Client)', line)
+        self.assertLess(line.index("posted from a person's account"), 600)
+        self.assertNotIn('Eve', '\n'.join(out))
+
+    def test_a_mention_of_a_user_that_cannot_be_found_prints_someone_and_is_not_stored(self):
+        def look_up(user, **payload):
+            if user == 'U0000000009':
+                raise SystemExit('users.info: user_not_found')
+            return {'ok': True, 'user': {'real_name': 'Ann Client'}}
+        self.slack.respond('users.info', look_up)
+        self.thread[2]['text'] = 'Yes, <@U0000000009> agrees.'
+        out = self.answers()
+        self.assertIn('Yes, @someone agrees.', out)
+        self.assertIn('Line one', out)
+        self.assertNotIn('U0000000009', self.state()['names'])
+        self.assertEqual(self.state()['seen'], {T1: self.latest})
+
+    def test_another_failed_name_lookup_still_stops_the_answers(self):
+        def refuse(**payload):
+            raise SystemExit('users.info: missing_scope')
+        self.slack.respond('users.info', refuse)
+        self.assertEqual(self.run_main('--answers').code, 'users.info: missing_scope')
 
     def test_control_characters_in_a_ticket_a_reply_and_a_name_never_reach_the_output(self):
         self.history(ticket(T1, top('Is \x1b[2Jit\u202e fine?'), reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest))
@@ -342,6 +400,17 @@ class AnswersTests(SlackTestCase):
         for char in ('\x1b', '\x08', '\x00', '\u202e', '\u200b'):
             self.assertNotIn(char, out)
         self.assertIn('Yes', out)
+
+    def test_what_a_person_cannot_see_never_reaches_the_answers(self):
+        hidden = ['\U000e0001', '\U000e0041', '\u00ad', '\u061c', '\ufe0f', '\U000e0100']
+        junk = ''.join(hidden)
+        self.history(ticket(T1, top(f'Café{junk}?', f'Jo{junk}'), reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest))
+        self.thread[2]['text'] = f'Zażółć{junk} \U0001f534 ok'
+        out = self.answers()
+        for char in hidden:
+            self.assertNotIn(char, out)
+        self.assertIn('Zażółć', out)
+        self.assertIn('\U0001f534 ok', out)
 
     def test_a_lone_surrogate_in_a_reply_does_not_stop_the_answers(self):
         self.thread[2]['text'] = 'Yes\ud800 really'
@@ -551,7 +620,7 @@ class ReplyTests(SlackTestCase):
                     self.assertEqual(self.slack.calls, [])
 
     def test_a_malformed_timestamp_is_refused(self):
-        for ts in ('123', '1700000000', '1700000000.1', 'abc.def', '1700000000.000100x'):
+        for ts in ('123', '1700000000', '1700000000.1', 'abc.def', '1700000000.000100x', ARABIC_INDIC_TS):
             with self.subTest(ts=ts):
                 result = self.run_main('--reply', ts, self.note('Fine text'), '--post')
                 self.assertTrue(str(result.code).startswith("Not posted: the first argument is the ticket's timestamp"))
@@ -795,7 +864,7 @@ class MainTests(SlackTestCase):
         self.assertEqual(result.out, f'Already closed {T1}.\n')
 
     def test_close_refuses_a_malformed_timestamp_before_any_call(self):
-        for ts in ('123', '1700000000', 'abc.def', '1700000000.000100x'):
+        for ts in ('123', '1700000000', 'abc.def', '1700000000.000100x', ARABIC_INDIC_TS):
             with self.subTest(ts=ts):
                 result = self.run_main('--close', ts)
                 self.assertEqual(result.code, "Not closed: the argument is the ticket's timestamp, as printed by --answers (like 1700000000.000100).")

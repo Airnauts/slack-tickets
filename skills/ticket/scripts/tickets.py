@@ -36,6 +36,7 @@ import stat
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -49,8 +50,9 @@ FIELD_LENGTH = 80
 WINDOW_DAYS = 14
 CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
 LINE_BREAKS = re.compile(r'[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]')
-INVISIBLE = re.compile(r'[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ud800-\udfff]')
-TIMESTAMP = re.compile(r'\d{10}\.\d{6}').fullmatch
+# Not Cn (unassigned): an old Python's tables would take a new emoji for one.
+HIDDEN_CATEGORIES = frozenset(('Cf', 'Cc', 'Cs', 'Co'))
+TIMESTAMP = re.compile(r'[0-9]{10}\.[0-9]{6}').fullmatch
 CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}').fullmatch
 # The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -186,10 +188,17 @@ def call(method, tok, read=False, **payload):
     sys.exit(f'{method}: rate limited too many times')
 
 
+def hidden(char):
+    """A character a person cannot see or that moves the cursor: any format, control (but not a tab or a newline),
+    surrogate or private-use character, and the variation selectors."""
+    return char not in '\n\t' and (unicodedata.category(char) in HIDDEN_CATEGORIES
+                                   or '\ufe00' <= char <= '\ufe0f' or '\U000e0100' <= char <= '\U000e01ef')
+
+
 def clean(text):
-    """Text from Slack that cannot draw a line of the script's own: every line break becomes a newline, every other
-    control, bidi, zero-width and lone surrogate character a space."""
-    return INVISIBLE.sub(' ', CONTROLS.sub(' ', LINE_BREAKS.sub('\n', text)))
+    """Text from Slack that cannot draw a line of the script's own: every line break becomes a newline, every hidden
+    character a space."""
+    return ''.join(' ' if hidden(char) else char for char in LINE_BREAKS.sub('\n', text))
 
 
 def one_line(text):
@@ -622,9 +631,14 @@ def answers(flags):
 
     def name(user):
         if user and user not in names:
-            profile = call('users.info', tok, read=True, user=user).get('user', {})
+            try:
+                profile = call('users.info', tok, read=True, user=user).get('user', {})
+            except SystemExit as stop:  # a deleted or foreign user; any other failure still stops, so a missing scope shows
+                if stop.code != 'users.info: user_not_found':
+                    raise
+                return 'someone'
             names[user] = one_line(profile.get('real_name') or profile.get('name') or user)
-        return names.get(user, 'someone')
+        return names.get(user) or user or 'someone'
 
     def plain(text, look_up=True):
         text = re.sub(r'<@(\w+)(?:\|[^>]*)?>', lambda m: '@' + (name(m.group(1)) if look_up else names.get(m.group(1), 'someone')), clean(text or ''))
@@ -658,11 +672,11 @@ def answers(flags):
                 seen[ticket['ts']] = latest
             continue
         lines = plain(ticket['text']).split('\n')
-        question = lines[0].strip('*').strip()
+        question = cut(lines[0].strip('*').strip(), QUESTION_LENGTH)
         parts = fields(lines)
-        urgency = next((part for part in parts if part.startswith('Urgency:')), '')
-        by = next((' by ' + part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
-        poster = '' if ticket.get('bot_id') else f" | posted from {name(ticket.get('user'))}'s account"
+        urgency = cut(next((part for part in parts if part.startswith('Urgency:')), ''), FIELD_LENGTH)
+        by = next((' by ' + cut(part[len('Asked by:'):].strip(), FIELD_LENGTH) for part in parts if part.startswith('Asked by:')), '')
+        poster = '' if ticket.get('bot_id') else f" | posted from a person's account ({name(ticket.get('user'))})"
         print(f'[{"closed" if closed else "open"}] {question}\n  {urgency} | asked {when(ticket["ts"])}{by} | ts {ticket["ts"]}{poster}')
         for reply in fresh:
             body = plain(reply.get('text')).replace('\n', '\n      ')
@@ -685,7 +699,7 @@ def answers(flags):
     print(f'{count(open_count, "ticket")} open.')
     if '--peek' not in flags:
         newest, kept = bound(tickets, is_closed), state['oldest_open'].get(channel, '')
-        if not show_all or not kept or (newest and float(newest) < float(kept)):
+        if not show_all or not kept or (newest and float(newest) < float(kept)) or all(t['ts'] != kept for t in tickets):
             state['oldest_open'][channel] = newest
     remember(state)
 

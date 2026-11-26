@@ -96,7 +96,7 @@ check, and never less than the last two weeks. It cannot see a ticket closed bef
 its check mark, or a reply added to a ticket that was closed more than two weeks ago. `tickets.py --answers --all`
 reads everything and starts over.
 
-A ticket that was not posted by the app, but from a person's account, is marked so in `--list` and `--answers`: anyone
+A ticket posted from a person's account, not by an app, is marked so in `--list` and `--answers`: anyone
 in the channel can post a message shaped like a ticket.
 
 ## The script

@@ -9,7 +9,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from helpers import CHANNEL, OTHER_CHANNEL, TicketsTestCase, clean_git_environment
+from helpers import ARABIC_INDIC_TS, CHANNEL, OTHER_CHANNEL, TicketsTestCase, clean_git_environment
 
 EMPTY = {'names': {}, 'seen': {}, 'hinted': {}, 'oldest_open': {}}
 needs_git = unittest.skipUnless(shutil.which('git'), 'git is not installed')
@@ -438,6 +438,12 @@ class StateContentTests(StateTestCase):
             with self.subTest(odd=odd):
                 self.put(json.dumps({'oldest_open': {CHANNEL: odd, OTHER_CHANNEL: '1700000000.000100'}}))
                 self.assertEqual(self.tickets.recall()['oldest_open'], {CHANNEL: '', OTHER_CHANNEL: '1700000000.000100'})
+
+    def test_a_bound_written_in_other_digits_means_a_full_read(self):
+        self.project('digits')
+        self.assertTrue(self.tickets.believable(ARABIC_INDIC_TS))
+        self.put(json.dumps({'oldest_open': {CHANNEL: ARABIC_INDIC_TS, OTHER_CHANNEL: '1700000000.000100'}}))
+        self.assertEqual(self.tickets.recall()['oldest_open'], {CHANNEL: '', OTHER_CHANNEL: '1700000000.000100'})
 
     def test_a_key_that_is_not_a_channel_id_is_dropped(self):
         self.project('keys')

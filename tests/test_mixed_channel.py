@@ -368,6 +368,12 @@ class BoundTests(SlackTestCase):
         self.run_main('--answers', '--all')
         self.assertEqual(self.state()['oldest_open'], {CHANNEL: T1})
 
+    def test_all_replaces_a_bound_older_than_every_message_that_points_at_no_ticket(self):
+        self.fill(ticket(T1), ticket(T2, top('Two?')))
+        self.remember_bound('1600000000.000100')
+        self.run_main('--answers', '--all')
+        self.assertEqual(self.state()['oldest_open'], {CHANNEL: T1})
+
     def test_a_reopened_ticket_before_the_bound_needs_answers_all(self):
         self.fill(ticket(T1, top('Reopened one?')), ticket(T2, top('Closed one?'), reactions=CLOSED_BY_US),
                   ticket(T3, top('Still open?')))
