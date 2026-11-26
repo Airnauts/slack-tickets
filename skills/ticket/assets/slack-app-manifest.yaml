@@ -1,0 +1,31 @@
+# The Slack app that posts tickets and reads the replies.
+#
+# 1. https://api.slack.com/apps -> "Create New App" -> "From a manifest" -> your workspace -> paste this file.
+# 2. "Install to Workspace", then copy the "Bot User OAuth Token" (xoxb-...) from "OAuth & Permissions".
+# 3. In the tickets channel: /invite @Tickets
+#
+# One app serves every tickets channel in the workspace: invite it to each one.
+# To change an existing app: its "App Manifest" page, paste, save, then "Reinstall to Workspace".
+#
+# Scopes: chat:write posts the tickets; groups:history and channels:history read a private or public channel and
+# its threads (the replies); users:read turns user ids into names; reactions:write adds the check mark that
+# closes a ticket.
+display_information:
+  name: Tickets
+  description: Posts questions for the client, one per message, with details in the thread.
+features:
+  bot_user:
+    display_name: Tickets
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - groups:history
+      - channels:history
+      - users:read
+      - reactions:write
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

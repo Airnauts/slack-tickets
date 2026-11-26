@@ -1,0 +1,5 @@
+{
+  "name": "slack-tickets",
+  "description": "Ask a client questions through a Slack tickets channel: one message per question, details in the thread, replies checked by script.",
+  "author": { "name": "Mateusz Paulski" }
+}

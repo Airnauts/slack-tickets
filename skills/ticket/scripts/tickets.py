@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Tickets in a Slack channel through Slack's own API: post a reviewed batch, and check for replies.
+
+  tickets.py batch.json            dry run: prints what would be posted, posts nothing
+  tickets.py batch.json --post     posts; safe to run again, already posted tickets are skipped
+  tickets.py --answers             replies that arrived since the last check, and how many tickets are open
+  tickets.py --answers --all       every ticket with every reply
+  tickets.py --answers --peek      as --answers, without remembering what was shown
+  tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
+  tickets.py --check               says which channel and whose token (never prints the token)
+
+Configuration, two environment variables (the project's .claude/settings.local.json, key "env"):
+  SLACK_TICKETS_CHANNEL   the channel's id, for example C0123456789
+  SLACK_TICKETS_TOKEN     the Slack app's bot token (xoxb-...)
+Without SLACK_TICKETS_TOKEN the token is read from the macOS Keychain, service "slack-tickets"
+(store it with: security add-generic-password -U -s slack-tickets -a slack -w).
+
+batch.json: {"tickets": [{"id": "refund-wording", "top": "...", "details": "..."}]}
+Texts are Slack mrkdwn: *bold* with single asterisks, one line per field, nobody mentioned.
+Results go to batch.result.json beside the batch. What --answers already showed is kept in
+~/.claude/slack-tickets/<channel>/state.json.
+"""
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+KEYCHAIN = 'slack-tickets'
+CLOSED = 'white_check_mark'
+
+
+def channel_id():
+    value = os.environ.get('SLACK_TICKETS_CHANNEL', '').strip()
+    if not re.fullmatch(r'[CG][A-Z0-9]{6,}', value):
+        sys.exit('SLACK_TICKETS_CHANNEL is not set to a channel id (like C0123456789). Put it under "env" in the '
+                 "project's .claude/settings.local.json and start a new session.")
+    return value
+
+
+def token():
+    value = os.environ.get('SLACK_TICKETS_TOKEN', '').strip()
+    if not value:
+        found = subprocess.run(['security', 'find-generic-password', '-s', KEYCHAIN, '-w'], capture_output=True, text=True)
+        value = found.stdout.strip() if found.returncode == 0 else ''
+    if not value:
+        sys.exit('No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain under "slack-tickets". See the README.')
+    return value
+
+
+def call(method, tok, read=False, **payload):
+    """One Slack call. Reading methods take their arguments in the address, writing ones as JSON."""
+    url = f'https://slack.com/api/{method}'
+    headers = {'Authorization': f'Bearer {tok}'}
+    data = None
+    if read:
+        url += '?' + urllib.parse.urlencode(payload)
+    else:
+        data = json.dumps(payload).encode('utf-8')
+        headers['Content-Type'] = 'application/json; charset=utf-8'
+    for _ in range(4):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=30) as response:
+                body = json.loads(response.read().decode('utf-8'))
+        except urllib.error.HTTPError as error:
+            if error.code == 429:
+                time.sleep(int(error.headers.get('Retry-After', '5')))
+                continue
+            sys.exit(f'{method}: HTTP {error.code}')
+        if not body.get('ok'):
+            hint = ''
+            if body.get('needed'):
+                hint = f' (the app needs one of the scopes {body["needed"]}; add it and reinstall the app)'
+            elif body.get('error') in ('not_in_channel', 'channel_not_found'):
+                hint = ' (invite the app to the channel: /invite @<the app>)'
+            sys.exit(f'{method}: {body.get("error", "unknown error")}{hint}')
+        return body
+    sys.exit(f'{method}: rate limited too many times')
+
+
+def save(path, value):
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as out:
+        json.dump(value, out, indent=2)
+
+
+def load(path):
+    try:
+        with open(path, encoding='utf-8') as source:
+            return json.load(source)
+    except FileNotFoundError:
+        return {}
+
+
+def problems(tickets):
+    found = []
+    ids = [t.get('id') for t in tickets]
+    if len(ids) != len(set(ids)) or not all(ids):
+        found.append('every ticket needs its own id')
+    for t in tickets:
+        top, details = t.get('top', ''), t.get('details', '')
+        if not top.strip() or not details.strip():
+            found.append(f'{t.get("id")}: both parts are required')
+        if '<@' in top or '<@' in details or '<!' in top or '<!' in details:
+            found.append(f'{t.get("id")}: nobody is mentioned in a ticket; a reviewer tags in the thread')
+        if len(top) > 3500 or len(details) > 3500:
+            found.append(f'{t.get("id")}: too long for one message')
+    return found
+
+
+def post(path, flags):
+    batch = load(path)
+    tickets = batch.get('tickets', [])
+    channel = batch.get('channel') or channel_id()
+    wrong = problems(tickets)
+    if wrong:
+        sys.exit('Not posted:\n  ' + '\n  '.join(wrong))
+    result_path = path[:-5] + '.result.json' if path.endswith('.json') else path + '.result.json'
+    done = load(result_path)
+
+    if '--post' not in flags:
+        for t in tickets:
+            mark = 'already posted' if done.get(t['id'], {}).get('details_ts') else 'to post'
+            print(f'--- {t["id"]} ({mark})\n{t["top"]}\n  [thread]\n{t["details"]}\n')
+        print(f'Dry run: {len(tickets)} tickets for {channel}, nothing posted. Add --post to post.')
+        return
+
+    tok = token()
+    for t in tickets:
+        state = done.setdefault(t['id'], {})
+        if not state.get('ts'):
+            sent = call('chat.postMessage', tok, channel=channel, text=t['top'], unfurl_links=False, unfurl_media=False)
+            # Slack answers with the conversation's own id, which can differ from the one asked for.
+            state['ts'], state['channel'] = sent['ts'], sent['channel']
+            save(result_path, done)
+            time.sleep(1.2)
+        where = state.get('channel', channel)
+        if not state.get('details_ts'):
+            reply = call('chat.postMessage', tok, channel=where, thread_ts=state['ts'], text=t['details'], unfurl_links=False, unfurl_media=False)
+            state['details_ts'] = reply['ts']
+            save(result_path, done)
+            time.sleep(1.2)
+        if not state.get('link'):
+            state['link'] = call('chat.getPermalink', tok, read=True, channel=where, message_ts=state['ts']).get('permalink')
+            save(result_path, done)
+        print(f'{t["id"]}: {state.get("link")}')
+    print(f'Posted {len(tickets)} tickets. Results: {result_path}')
+
+
+def answers(flags):
+    channel, tok = channel_id(), token()
+    state_path = os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')
+    state = load(state_path)
+    names, seen = state.setdefault('names', {}), state.setdefault('seen', {})
+
+    def name(user):
+        if user and user not in names:
+            profile = call('users.info', tok, read=True, user=user).get('user', {})
+            names[user] = profile.get('real_name') or profile.get('name') or user
+        return names.get(user, 'someone')
+
+    def plain(text):
+        text = re.sub(r'<@(\w+)(?:\|[^>]*)?>', lambda m: '@' + name(m.group(1)), text or '')
+        text = re.sub(r'<(https?://[^|>]+)\|([^>]+)>', r'\2', text)
+        return re.sub(r'<(https?://[^>]+)>', r'\1', text)
+
+    def when(ts):
+        return datetime.datetime.fromtimestamp(float(ts)).strftime('%b %d %H:%M')
+
+    messages, cursor = [], None
+    while True:
+        page = call('conversations.history', tok, read=True, channel=channel, limit=200, **({'cursor': cursor} if cursor else {}))
+        messages += page.get('messages', [])
+        cursor = page.get('response_metadata', {}).get('next_cursor')
+        if not cursor:
+            break
+    tickets = sorted((m for m in messages if (m.get('text') or '').lstrip().startswith('*Q:')), key=lambda m: float(m['ts']))
+
+    show_all = '--all' in flags
+    open_count, shown = 0, 0
+    for ticket in tickets:
+        closed = any(r.get('name') == CLOSED for r in ticket.get('reactions', []))
+        open_count += 0 if closed else 1
+        last_seen = '0' if show_all else seen.get(ticket['ts'], '0')
+        latest = ticket.get('latest_reply', '0')
+        fresh = []
+        if ticket.get('reply_count') and (show_all or float(latest) > float(last_seen)):
+            thread = call('conversations.replies', tok, read=True, channel=channel, ts=ticket['ts'], limit=200).get('messages', [])[1:]
+            # The ticket's own Details reply is part of the ticket, not an answer.
+            fresh = [r for r in thread if float(r['ts']) > float(last_seen) and not (r.get('text') or '').lstrip().startswith('*Details*')]
+        if not fresh and not show_all:
+            continue
+        lines = plain(ticket['text']).split('\n')
+        question = lines[0].strip('*').strip()
+        urgency = next((part.strip() for line in lines for part in line.split('·') if part.strip().startswith('Urgency:')), '')
+        print(f'[{"closed" if closed else "open"}] {question}\n  {urgency} | asked {when(ticket["ts"])} | ts {ticket["ts"]}')
+        for reply in fresh:
+            body = plain(reply.get('text')).replace('\n', '\n      ')
+            files = f' [{len(reply["files"])} file(s) attached]' if reply.get('files') else ''
+            print(f'    {name(reply.get("user"))}, {when(reply["ts"])}: {body}{files}')
+        shown += 1
+        if '--peek' not in flags and not show_all:
+            seen[ticket['ts']] = latest
+    if not shown:
+        print('No new replies.')
+    print(f'{len(tickets)} tickets, {open_count} open.')
+    save(state_path, state)
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    flags = {a for a in sys.argv[1:] if a.startswith('--')}
+    if '--check' in flags:
+        who = call('auth.test', token())
+        print(f'Channel {channel_id()}. Posting as {who.get("user")} in {who.get("team")}' + (' (a bot)' if who.get('bot_id') else ' (a person)'))
+    elif '--answers' in flags:
+        answers(flags)
+    elif '--close' in flags and len(args) == 1:
+        call('reactions.add', token(), channel=channel_id(), timestamp=args[0], name=CLOSED)
+        print(f'Closed {args[0]}.')
+    elif len(args) == 1:
+        post(args[0], flags)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == '__main__':
+    main()
