@@ -52,16 +52,26 @@ files, written to a temporary folder and not kept.
 
 ```
 *Q: <the question, one sentence, ending with a question mark>*
-Urgency: <level> · Asked by: <the reporter's name>
-Our decision: <what we will do> | none yet, we need yours
-Context: <one or two plain sentences>
-Source: <the client's own document or artifact, by name and section>   (only when the question comes from one)
+*Urgency:* <level> · *Asked by:* <the reporter's name>
+*Our decision:* <what we will do> | none yet, we need yours
+*Context:* <one or two plain sentences>
+*Source:* <the client's own document or artifact, by name and section>   (only when the question comes from one)
 ```
 
 **The first reply in its thread** carries the rest, under a first line `*Details*`: what led to the question, the
 options and what each one means, the exact words when the question is about wording, links.
 
-Both are Slack mrkdwn, not Markdown: `*bold*` with single asterisks, `•` for bullets, a plain line break between fields.
+Both are Slack mrkdwn, not Markdown: `*bold*` with single asterisks, `•` for bullets, `<https://address|words>` for a
+link, a plain line break between fields.
+
+**What is bold.** The question, whole, and every label up to and including its colon; never the text after a label.
+At the top the labels are the five above. In the Details and in any reply of ours, a label is the short name that
+opens a line or a bullet and says what follows: `• *Option A:* release first`, `• *Ours:* ...`, `• *Yours:* ...`,
+`• *Today:* ...`. A bullet that is simply a sentence has no label and no bold.
+
+**Pull requests and issues are links.** Wherever the Details or a reply names one of our pull requests or issues,
+the words are the link: `• *Ours:* <https://github.com/acme/app/pull/882|pull request 882>.` Take the address from
+`gh pr view <number> --json url` (or the issue tracker), never build it from a guess.
 
 ### The fields
 
@@ -91,7 +101,7 @@ Both are Slack mrkdwn, not Markdown: `*bold*` with single asterisks, `•` for b
 ### How to write it
 
 - Plain words for a non-technical reader. In the top-level message: no pull request numbers, issue ids, file paths,
-  setting names, code names or internal rule numbers. Our own links and ids belong in the Details.
+  setting names, code names or internal rule numbers. Our own links and ids belong in the Details, as links.
 - Say what happens to a customer, not how the code works.
 - Quote wording exactly, in quotation marks, when the question is about wording. Keep the client's own approved words
   word for word.
@@ -103,16 +113,17 @@ Both are Slack mrkdwn, not Markdown: `*bold*` with single asterisks, `•` for b
 
 ```
 *Q: May the text reminder page show a different sample message than the one registered with the carrier, for a few days?*
-Urgency: 🟢 No rush · Asked by: Jane Smith
-Our decision: We will update the registration right after the release, unless you want it done first.
-Context: The public page that describes the text reminders shows sample messages. The next release changes one of them, so for a short time the page and the registration would not match.
+*Urgency:* 🟢 No rush · *Asked by:* Jane Smith
+*Our decision:* We will update the registration right after the release, unless you want it done first.
+*Context:* The public page that describes the text reminders shows sample messages. The next release changes one of them, so for a short time the page and the registration would not match.
 ```
 
 ```
 *Details*
-• Today the page shows: "<old sample>". After the release: "<new sample>".
-• Option A: release first, then update the registration (a few days of mismatch).
-• Option B: update the registration first and wait for it before the release.
+• *Today:* the page shows "<old sample>". After the release: "<new sample>".
+• *Option A:* release first, then update the registration (a few days of mismatch).
+• *Option B:* update the registration first and wait for it before the release.
+• *Ours:* <https://github.com/acme/app/pull/882|pull request 882>.
 • The answer should come from whoever looks after the registration.
 ```
 

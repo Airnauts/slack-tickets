@@ -19,8 +19,8 @@ Without SLACK_TICKETS_TOKEN the token is read from the macOS Keychain, service "
 (store it with: security add-generic-password -U -s slack-tickets -a slack -w).
 
 batch.json: {"tickets": [{"id": "refund-wording", "top": "...", "details": "..."}]}
-Texts are Slack mrkdwn: *bold* with single asterisks, one line per field, nobody mentioned, and the
-top-level message says who asked ("Asked by: <name>").
+Texts are Slack mrkdwn: *bold* with single asterisks (the question and each label), one line per field,
+nobody mentioned, and the top-level message says who asked ("*Asked by:* <name>").
 Results go to batch.result.json beside the batch. What --answers already showed is kept in
 ~/.claude/slack-tickets/<channel>/state.json.
 """
@@ -114,7 +114,7 @@ def problems(tickets):
             found.append(f'{t.get("id")}: both parts are required')
         if '<@' in top or '<@' in details or '<!' in top or '<!' in details:
             found.append(f'{t.get("id")}: nobody is mentioned in a ticket; a reviewer tags in the thread')
-        if not re.search(r'Asked by: *\S', top):
+        if not re.search(r'Asked by:\*? *[^\s*]', top):
             found.append(f'{t.get("id")}: the top-level message says who asked ("Asked by: <name>")')
         if len(top) > 3500 or len(details) > 3500:
             found.append(f'{t.get("id")}: too long for one message')
@@ -160,6 +160,11 @@ def post(path, flags):
     print(f'Posted {len(tickets)} tickets. Results: {result_path}')
 
 
+def fields(lines):
+    """A ticket's lines split into its fields, each label read with or without its bold."""
+    return [re.sub(r'^\*([^*:]+:)\*', r'\1', part.strip()) for line in lines for part in line.split('\u00b7')]
+
+
 def history(channel, tok):
     messages, cursor = [], None
     while True:
@@ -187,7 +192,7 @@ def listing():
     print(f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:')
     for t in still_open:
         lines = re.sub(r'<[^>|]*\|([^>]*)>', r'\1', t.get('text') or '').split('\n')
-        parts = [part.strip() for line in lines[1:] for part in line.split('\u00b7')]
+        parts = fields(lines[1:])
         level = next((part[len('Urgency:'):].strip() for part in parts if part.startswith('Urgency:')), '?')
         level = re.sub(r':[a-z_]+:', '', level).strip() or level
         by = next((part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
@@ -259,7 +264,7 @@ def answers(flags):
             continue
         lines = plain(ticket['text']).split('\n')
         question = lines[0].strip('*').strip()
-        parts = [part.strip() for line in lines for part in line.split('·')]
+        parts = fields(lines)
         urgency = next((part for part in parts if part.startswith('Urgency:')), '')
         by = next((' by ' + part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
         print(f'[{"closed" if closed else "open"}] {question}\n  {urgency} | asked {when(ticket["ts"])}{by} | ts {ticket["ts"]}')
