@@ -39,7 +39,7 @@ Copy or symlink `skills/ticket` into the agent's skills folder. For Codex that i
 or `~/.agents/skills/` for every project.
 
 The script calls `slack.com`, so the agent's sandbox has to allow network access. Codex blocks it by default, and the
-script then says "Slack could not be reached".
+script then says "Slack could not be reached". Where the agent can limit it, allow `slack.com` only.
 
 ## Set up Slack (once per workspace)
 
@@ -69,7 +69,8 @@ Add two variables to the project's `.claude/settings.local.json`. That file is p
 - To keep the token out of files, leave `SLACK_TICKETS_TOKEN` out and store it in the macOS Keychain:
   `security add-generic-password -U -s slack-tickets -a slack -w` (it asks for the token without showing it).
 
-Another agent has no such file: export the same two variables in the shell it starts from.
+Another agent has no such file: export the channel id in the shell it starts from, and the token too unless it is in
+the Keychain. Keep the token out of your shell profile.
 
 Start a new Claude Code session and ask "check the tickets setup". Claude runs the check and says which channel and
 which app it will post as.
