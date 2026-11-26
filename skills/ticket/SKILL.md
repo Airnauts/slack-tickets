@@ -23,6 +23,17 @@ missing, tell the user what, point them at the setup steps in `${CLAUDE_PLUGIN_R
 manifest, `${CLAUDE_PLUGIN_ROOT}/slack-app-manifest.yaml`, and stop: do not set a token up for them, do not ask
 them to paste one into the chat, and never print the environment (`env`, `printenv`, `echo $SLACK_TICKETS_TOKEN`).
 
+## Where a project's data lives
+
+**Never write anything into this skill's or the plugin's own folder.** It is an installed copy that every update
+replaces, and it is shared by every project. A project's data has two homes, and nothing else:
+
+- the tickets channel itself, which is the list of what was asked and answered (`tickets.py --answers --all`);
+- the project's register of client documents, described under "When a contradiction is found".
+
+Do not keep a log of posted tickets anywhere: the channel is that log. Batch files and reply notes are scratch
+files, written to a temporary folder and not kept.
+
 ## A ticket's two parts
 
 **The top-level message** stays short, so the channel reads as a list:
@@ -99,7 +110,8 @@ A client sends many documents, and they do not always agree. A project may keep 
 links, status and who decides what. Look for it at `${CLAUDE_PROJECT_DIR}/.claude/slack-tickets/sources.md`, then at
 `~/.claude/slack-tickets/<channel id>/sources.md`. If neither exists and the project has more than a couple of client
 documents, offer to start one from `${CLAUDE_SKILL_DIR}/assets/sources-template.md`. Add a row for every new document
-the moment it arrives.
+the moment it arrives. The register holds the client's documents, who decides what, and questions deliberately
+held back or settled without a ticket. It does not list posted tickets.
 
 Whenever new material from the client is read (a brief, an artifact, a document, a Slack message, feedback), compare
 it with what came before: the register's current documents, earlier messages, the approved wording in use, what is

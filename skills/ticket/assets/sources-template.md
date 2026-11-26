@@ -20,11 +20,20 @@ Tickets tag nobody. Use this table to say, in a ticket's Details, whose answer i
 |---|---|---|---|---|
 | | | | | current |
 
-## Our own records of open conflicts and questions
+## Other places where a conflict or question may already be logged
 
-Places where a conflict or question may already be logged or asked. Check them before opening a ticket; a ticket about
-something already asked links the earlier place and says so.
+Check them before opening a ticket; a ticket about something already asked links the earlier place and says so.
+Posted tickets are not listed here: the channel is their list (`tickets.py --answers --all`).
 
 | Record | Date | Where |
 |---|---|---|
-| The tickets channel itself | | Slack; `tickets.py --answers --all` lists it |
+| | | |
+
+## Held back, or settled without a ticket
+
+Questions we chose not to post, and ones the user decided on our side, with the date and the reason. They are
+nowhere in the channel, so this is their only record.
+
+| Question | Date | Held back or decided, and why |
+|---|---|---|
+| | | |
