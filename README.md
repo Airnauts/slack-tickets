@@ -2,8 +2,8 @@
 
 A Claude Code plugin for asking a client questions through a Slack channel.
 
-- One message per question: the question, an urgency, our own decision, a short context. Nobody is tagged; a reviewer
-  tags the right person in the thread.
+- One message per question: the question, an urgency, who asked, our own decision, a short context. Nobody is tagged;
+  a reviewer tags the right person in the thread.
 - The details go in the first reply of the thread.
 - Claude drafts a batch, shows it, and posts it on one go. A script checks the channel for replies and prints only what
   is new.

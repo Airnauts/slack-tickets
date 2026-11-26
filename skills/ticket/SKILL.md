@@ -29,7 +29,7 @@ them to paste one into the chat, and never print the environment (`env`, `printe
 
 ```
 *Q: <the question, one sentence, ending with a question mark>*
-Urgency: <level>
+Urgency: <level> · Asked by: <the reporter's name>
 Our decision: <what we will do> | none yet, we need yours
 Context: <one or two plain sentences>
 Source: <the client's own document or artifact, by name and section>   (only when the question comes from one)
@@ -47,6 +47,10 @@ Both are Slack mrkdwn, not Markdown: `*bold*` with single asterisks, `•` for b
 - **No mention anywhere**, not at the top and not in the Details: a reviewer routes the ticket by tagging someone in
   the thread. To help them, the Details may say in plain words whose answer is needed ("the answer should come from
   counsel", "this is about pricing"), as a role or a subject. The script refuses a batch that mentions anyone.
+- **Asked by.** The person the question comes from, as a plain name, never a mention. Tickets are posted by the
+  Slack app, so without this line the client cannot tell who is asking or who to come back to. It is the user of
+  this session unless they name someone else: take the name from `git config user.name`, and ask once if that is
+  empty or not a person's name. The script refuses a ticket without it.
 - **Urgency.** One of three, in these words:
   - `🔴 Blocking`: something cannot ship or go live until this is answered. Say what, and the date if there is one.
   - `🟠 This week`: named work is waiting on the answer this week.
@@ -76,7 +80,7 @@ Both are Slack mrkdwn, not Markdown: `*bold*` with single asterisks, `•` for b
 
 ```
 *Q: May the text reminder page show a different sample message than the one registered with the carrier, for a few days?*
-Urgency: 🟢 No rush
+Urgency: 🟢 No rush · Asked by: Jane Smith
 Our decision: We will update the registration right after the release, unless you want it done first.
 Context: The public page that describes the text reminders shows sample messages. The next release changes one of them, so for a short time the page and the registration would not match.
 ```
@@ -128,7 +132,7 @@ An assumption of ours that the new material contradicts is asked the same way, w
 6. **Report** each ticket's link, and note it where the open question lives (the issue, the spec, the pull request),
    so the answer can find its way back.
 
-Post the most urgent first. Tickets appear under the Slack app's name, not the user's.
+Post the most urgent first. Tickets appear under the Slack app's name, which is why each one says who asked.
 
 ## Checking for answers
 
@@ -140,7 +144,8 @@ Post the most urgent first. Tickets appear under the Slack app's name, not the u
 
 It skips each ticket's own Details reply and shows names. Then:
 
-1. Report per ticket with news: the question in a few words, who replied or was tagged, and whether it is answered.
+1. Report per ticket with news: the question in a few words, who asked, who replied or was tagged, and whether it
+   is answered.
    Lead with the blocking ones.
 2. For an answered ticket: quote the answer, say what it changes, and propose where to record it (the issue, the doc,
    the code). Record only what the person wrote; an ambiguous answer gets a follow-up question in the same thread, on
