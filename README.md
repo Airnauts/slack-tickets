@@ -18,16 +18,13 @@ asked. Another agent runs the same command as its first step.
 
 ## Install
 
-The repository is private, so git on your machine must be able to read it (an SSH key, or `gh auth login` followed by
-`gh auth setup-git`).
-
 ```
 /plugin marketplace add Airnauts/slack-tickets
 /plugin install slack-tickets@airnauts
 ```
 
 The repository is its own marketplace (named `airnauts`), so Claude Code pulls the plugin straight from it. If the
-first command fails with a git error and you use HTTPS, not SSH, for GitHub, start Claude Code with
+first command fails with a git error, for example because you have no SSH key for GitHub, start Claude Code with
 `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` set.
 
 To get updates automatically, open `/plugin`, go to Marketplaces, and turn auto-update on for `airnauts`. To update by
@@ -113,3 +110,7 @@ They never call Slack. A run that checks whether an agent follows the skill cost
 
 `tests/description/` checks whether the skill's description gets it called: a set of prompts and a runner that starts
 real sessions, so it is run by hand. See `tests/description/README.md` before changing the description.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
