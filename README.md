@@ -123,3 +123,12 @@ claude plugin validate ~/Projects/slack-tickets   check the manifests
 ```
 
 There is no `version` in the manifests on purpose: every commit pushed counts as an update.
+
+Run the tests with:
+
+```
+python3 -m unittest discover -s tests
+```
+
+They never call Slack. A run that checks whether an agent follows the skill costs tokens and is run by hand, see
+[`tests/agents/README.md`](tests/agents/README.md).
