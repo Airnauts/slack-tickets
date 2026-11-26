@@ -44,11 +44,16 @@ def load_script():
 tickets = load_script()
 
 
-def drop_git_variables():
-    """Removes every inherited GIT_* variable (git exports GIT_DIR to a hook run from a linked worktree), so the
-    tests' own git commands and the script's state_path() never act on a real repository."""
+def clean_git_environment(ceiling):
+    """Makes git in this process independent of the machine. Removes every inherited GIT_* variable (git exports
+    GIT_DIR to a hook run from a linked worktree), stops git from looking for a repository at or above ceiling, and
+    turns off the global and system configuration (hooks, templates, signing), so the tests' own git commands and
+    the script's state_path() never act on a real repository."""
     for name in [n for n in os.environ if n.startswith('GIT_')]:
         del os.environ[name]
+    os.environ['GIT_CEILING_DIRECTORIES'] = ceiling
+    os.environ['GIT_CONFIG_GLOBAL'] = os.devnull
+    os.environ['GIT_CONFIG_NOSYSTEM'] = '1'
 
 
 def run_cli(args, channel=None):
@@ -109,9 +114,9 @@ class TicketsTestCase(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop('SLACK_TICKETS_CHANNEL', None)
         os.environ.pop('SLACK_TICKETS_TOKEN', None)
-        drop_git_variables()
         # A scratch folder is never part of a repository that happens to hold the temporary folder.
-        os.environ['GIT_CEILING_DIRECTORIES'] = os.path.dirname(self.tmp)
+        self.git_ceiling = os.path.dirname(self.tmp)
+        clean_git_environment(self.git_ceiling)
 
         self.slack = FakeSlack()
         self.patch(tickets, 'call', self.slack)

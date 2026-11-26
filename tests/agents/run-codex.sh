@@ -5,11 +5,25 @@
 #
 # Safety: the workspace-write sandbox with the network turned off by flag, no Slack variables, and the skill
 # copied (not linked) into the scratch project, so nothing can be written into this repository. "No token"
-# does not rest on an empty Keychain: a stub `security` that always fails comes first on the agent's PATH, and
-# a preflight run of the script must report "No Slack token" before the agent starts.
+# does not rest on an empty Keychain: a stub `security` that refuses only the lookup of the tickets token and passes
+# every other call on comes first on the agent's PATH, and a preflight run of the script must report "No Slack token"
+# before the agent starts. The run also refuses to start when the Keychain holds a tickets token (see the guard below).
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 if ! command -v codex >/dev/null 2>&1; then echo "codex is not installed"; exit 1; fi
+
+# Guard that does not rest on PATH: refuse to start when the Keychain holds a tickets token. This is an attribute-only
+# lookup, with no -w, so it reads no secret.
+if [ -x /usr/bin/security ] && /usr/bin/security find-generic-password -s slack-tickets > /dev/null 2>&1 \
+  && [ "$TICKETS_AGENT_RUN_WITH_KEYCHAIN" != 1 ]; then
+  cat <<'MSG'
+This machine's Keychain holds a tickets token. These runs are meant for "no token". The stand-in `security` is then
+the only thing between the agent and that token, and a shell that reorders PATH gets past it.
+To run anyway, set TICKETS_AGENT_RUN_WITH_KEYCHAIN=1 and check that the run ends with
+"Keychain stub used by the agent's commands: yes".
+MSG
+  exit 1
+fi
 
 SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/slack-tickets-codex.XXXXXX") || exit 1
 

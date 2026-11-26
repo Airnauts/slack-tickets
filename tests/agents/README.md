@@ -40,13 +40,18 @@ channel id in it.
 
 Read this before you run one. Keep it true when you change a script or add a case.
 
+- The run refuses to start when the Keychain holds a tickets token. It checks first, with an attribute-only lookup
+  (`security find-generic-password -s slack-tickets`) that reads no secret. These runs are meant for "no token". To run
+  anyway, set `TICKETS_AGENT_RUN_WITH_KEYCHAIN=1`. Then the stand-in below is the only guard, and it rests on PATH
+  order, so check that the last line of the run says `Keychain stub used by the agent's commands: yes`.
 - No token comes from the `security` stub and the preflight, not from the agent's good behaviour. The script reads
   `SLACK_TICKETS_TOKEN`, and when that is unset it asks the macOS Keychain through the `security` command. Each run
   makes `<scratch>/bin/security`, a stub that refuses the lookup of the tickets token and records it, and puts
   `<scratch>/bin` first on the PATH given to the agent. Every other call goes on to the real command, because Claude
-  Code keeps its own login in the Keychain: a stub that refused everything logged it out. Before the agent starts, the script runs `tickets.py --check --channel=C0000000000` with that PATH
-  and no token. If the output does not say `No Slack token`, the run stops. At the end it prints whether the stub was
-  used by the agent's own commands. The script cannot post without a token.
+  Code keeps its own login in the Keychain: a stub that refused everything logged it out. Before the agent starts, the
+  script runs `tickets.py --check --channel=C0000000000` with that PATH and no token. If the output does not say
+  `No Slack token`, the run stops. At the end it prints whether the stub was used by the agent's own commands. The
+  script cannot post without a token.
 - The skill pre-approves every `tickets.py` command in Claude Code, including `--post`, `--close` and
   `--channel=<any id>`. So "the agent does not post through the script" is what the skill's text should make it do, not
   something a flag enforces. What stops a post is the missing token.
@@ -54,15 +59,18 @@ Read this before you run one. Keep it true when you change a script or add a cas
   inherited, and your user-level Claude Code settings and connectors still apply.
 - `Write` is allowed without a path limit, so a run can write outside the scratch folder. The skill may write a batch to
   a temporary folder. Check what the run wrote if that matters to you.
-- The Slack connector's write and search tools are disallowed in every case except `post` and `setpost`. There the write
-  tools stay open on purpose, because the attempt is what the case checks. The default permission mode refuses it, and
-  the dummy channel id would make the send fail anyway. Run those two only in a session whose connector you are content
-  to see called. `nochannel` also disallows the search tools, so no real channel is looked up.
+- The Slack connector's search tools are disallowed in every case, so no real channel is looked up. Its write tools are
+  disallowed in every case except `post` and `setpost`. There they stay open on purpose, because the attempt is what
+  the case checks. The default permission mode refuses it, and the dummy channel id would make the send fail anyway.
+  Run those two only in a session whose connector you are content to see called. Its read tools are never disallowed.
+  The default permission mode refuses them, and that refusal is what the `list` and `setlist` cases look for.
 - The denylist names the connector as `claude_ai_Slack`. If your Slack connector has another name, the list does not
   apply to it.
 - Claude Code runs in `--permission-mode default`, with only the skill and `Write` allowed, so nothing else that needs
   approval can run.
-- The Codex run turns network access off by flag and works on a copy of the skill.
+- The Codex run turns network access off by flag and works on a copy of the skill. Its commands run in a login shell,
+  which can reorder PATH and put the real `security` back in front of the stand-in. So for Codex the network-off flag
+  is what keeps a token from reaching Slack.
 - Dummy channel ids only (`C0000000000`, `C0123456789`, `C1111111111`, `C2222222222`). `summarise.py` lists any other
   channel id, and any direct-message id (`D...`), that appears anywhere in the output.
 - Scratch projects and outputs live under `mktemp -d`. Never point a run at a real project or a real channel.

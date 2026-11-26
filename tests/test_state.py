@@ -9,7 +9,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from helpers import TicketsTestCase, drop_git_variables
+from helpers import TicketsTestCase, clean_git_environment
 
 EMPTY = {'names': {}, 'seen': {}}
 needs_git = unittest.skipUnless(shutil.which('git'), 'git is not installed')
@@ -78,9 +78,10 @@ class StatePathInRepositoryTests(StateTestCase):
         self.assert_path(self.tickets.state_path(), self.want)
 
     def test_no_git_on_path_uses_the_current_folder(self):
-        os.chdir(self.repo)
+        deep = os.path.join(self.repo, 'src', 'deep')
+        os.chdir(deep)
         with mock.patch.dict(os.environ, {'PATH': os.path.join(self.tmp, 'nothing-here')}):
-            self.assert_path(self.tickets.state_path(), self.want)
+            self.assert_path(self.tickets.state_path(), self.state_file(deep))
 
     def test_nothing_remembered_yet(self):
         os.chdir(self.repo)
@@ -135,8 +136,9 @@ class InheritedGitVariablesTests(StateTestCase):
         self.assertTrue(before)
         os.environ['GIT_DIR'] = os.path.join(repo, '.git')
         os.environ['GIT_WORK_TREE'] = repo
-        drop_git_variables()
-        self.assertEqual([n for n in os.environ if n.startswith('GIT_') and n != 'GIT_CEILING_DIRECTORIES'], [])
+        clean_git_environment(self.git_ceiling)
+        self.assertEqual(sorted(n for n in os.environ if n.startswith('GIT_')),
+                         ['GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'])
         os.chdir(plain)
         self.assert_path(self.tickets.state_path(), self.state_file(plain))
         self.tickets.remember({'seen': {'1.000001': '2.000002'}, 'names': {}})

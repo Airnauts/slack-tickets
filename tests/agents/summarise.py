@@ -9,7 +9,8 @@ import sys
 
 DUMMY = {'C0000000000', 'C0123456789', 'C1111111111', 'C2222222222'}
 # What the script accepts as a channel id ([CG][A-Z0-9]{6,}), plus direct-message ids (D...), which are never dummy.
-CHANNEL_ID = re.compile(r'\b[CGD][A-Z0-9]{6,}\b')
+# Real ids contain a digit, so a capitalised word such as DETAILS or CONTEXT is not flagged.
+CHANNEL_ID = re.compile(r'\b[CGD](?=[A-Z0-9]*\d)[A-Z0-9]{6,}\b')
 CODEX_EVENTS = ('item.', 'thread.', 'turn.')
 
 
@@ -28,8 +29,10 @@ def claude_event(event):
                 if isinstance(body, list):
                     body = ' '.join(x.get('text', '') for x in body if isinstance(x, dict))
                 print('  ->', ('ERR ' if part.get('is_error') else '') + str(body)[:200].replace('\n', ' / '))
-            elif part.get('type') == 'text' and not part.get('text', '').startswith('Base directory'):
-                print('TEXT:', part['text'][:900])
+            elif part.get('type') == 'text':
+                text = part.get('text') or ''
+                if not text.startswith('Base directory'):
+                    print('TEXT:', text[:900])
     elif kind == 'result':
         denied = [(d.get('tool_name'), json.dumps(d.get('tool_input'), ensure_ascii=False)[:200])
                   for d in event.get('permission_denials') or []]
