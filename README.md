@@ -38,6 +38,9 @@ hand: `/plugin marketplace update airnauts`, then `/reload-plugins`.
 Copy or symlink `skills/ticket` into the agent's skills folder. For Codex that is `.agents/skills/` in the project,
 or `~/.agents/skills/` for every project.
 
+The script calls `slack.com`, so the agent's sandbox has to allow network access. Codex blocks it by default, and the
+script then says "Slack could not be reached".
+
 ## Set up Slack (once per workspace)
 
 1. Go to https://api.slack.com/apps, choose "Create New App", then "From a manifest", pick the workspace, and paste
