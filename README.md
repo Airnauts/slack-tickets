@@ -110,3 +110,6 @@ python3 -m unittest discover -s tests
 
 They never call Slack. A run that checks whether an agent follows the skill costs tokens and is run by hand, see
 [`tests/agents/README.md`](tests/agents/README.md).
+
+`tests/description/` checks whether the skill's description gets it called: a set of prompts and a runner that starts
+real sessions, so it is run by hand. See `tests/description/README.md` before changing the description.
