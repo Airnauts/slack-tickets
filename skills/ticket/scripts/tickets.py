@@ -191,8 +191,8 @@ def answers(flags):
         fresh = []
         if ticket.get('reply_count') and (show_all or float(latest) > float(last_seen)):
             thread = call('conversations.replies', tok, read=True, channel=channel, ts=ticket['ts'], limit=200).get('messages', [])[1:]
-            # The ticket's own Details reply is part of the ticket, not an answer.
-            fresh = [r for r in thread if float(r['ts']) > float(last_seen) and not (r.get('text') or '').lstrip().startswith('*Details*')]
+            # The ticket's own Details reply is part of the ticket, not an answer (with or without the bold).
+            fresh = [r for r in thread if float(r['ts']) > float(last_seen) and not (r.get('text') or '').lstrip(' *\n').startswith('Details')]
         if not fresh and not show_all:
             continue
         lines = plain(ticket['text']).split('\n')
