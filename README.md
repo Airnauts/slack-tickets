@@ -97,8 +97,8 @@ python3 skills/ticket/scripts/tickets.py --reply <ts> note.txt our own update in
 python3 skills/ticket/scripts/tickets.py --close <ts>          mark a ticket closed
 ```
 
-It needs Python 3 and nothing else. It remembers which replies it has shown in
-`~/.claude/slack-tickets/<channel id>/state.json`.
+It needs Python 3 and nothing else. It remembers which replies it has shown in `.slack-tickets/state.json` in the
+project, a folder it creates and keeps out of git. Git worktrees share the main checkout's file.
 
 ## Developing
 

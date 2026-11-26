@@ -22,7 +22,7 @@ batch.json: {"tickets": [{"id": "refund-wording", "top": "...", "details": "..."
 Texts are Slack mrkdwn: *bold* with single asterisks (the question and each label), one line per field,
 nobody mentioned, and the top-level message says who asked ("*Asked by:* <name>").
 Results go to batch.result.json beside the batch. What --answers already showed is kept in
-~/.claude/slack-tickets/<channel>/state.json.
+.slack-tickets/state.json in the project (the main checkout, when run in a git worktree).
 """
 import datetime
 import json
@@ -104,6 +104,63 @@ def load(path):
             return json.load(source)
     except FileNotFoundError:
         return {}
+
+
+def state_path():
+    """Where --answers remembers what it showed: .slack-tickets/state.json in the project the script is run from.
+    In a git worktree that is the main checkout, so every worktree shares one file."""
+    try:
+        found = subprocess.run(['git', 'rev-parse', '--git-common-dir'], capture_output=True, text=True)
+        common = os.path.abspath(found.stdout.strip()) if found.returncode == 0 and found.stdout.strip() else ''
+    except OSError:  # no git on this machine
+        common = ''
+    # Only a plain .git folder names the project; a submodule or a bare repository does not.
+    root = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else os.getcwd()
+    return os.path.join(root, '.slack-tickets', 'state.json')
+
+
+def linked(path):
+    """True when the state file or its folder is a link, which could send a read or a write outside the project."""
+    return os.path.islink(path) or os.path.islink(os.path.dirname(path))
+
+
+def believable(last):
+    """A reply's timestamp that can be true: a number, and not in the future (a day's slack for a clock that is off)."""
+    try:
+        return 0 < float(last) <= time.time() + 86400
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def recall():
+    """What --answers remembered, read as something a stranger could have put in the project.
+    A missing, unreadable, linked or oddly shaped file counts as nothing remembered. Never raises."""
+    try:
+        path = state_path()
+        state = {} if linked(path) else load(path)
+        seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
+        names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
+    except Exception:  # whatever the file holds, --list must still load with the skill
+        seen, names = {}, {}
+    return {'names': names, 'seen': seen}
+
+
+def remember(state):
+    """Saves what was shown. A folder that cannot be written costs a repeat next time, not the answers just printed."""
+    path = state_path()
+    folder = os.path.dirname(path)
+    try:
+        if linked(path):
+            raise OSError(0, 'a link stands in its place')
+        os.makedirs(folder, exist_ok=True)
+        try:  # before the state, so the state is never in the project without it; 'x' does not follow a link
+            with open(os.path.join(folder, '.gitignore'), 'x', encoding='utf-8') as out:
+                out.write('*\n')
+        except FileExistsError:
+            pass
+        save(path, state)
+    except OSError as error:
+        print(f'What was shown could not be remembered ({path}: {error.strerror}). The same replies will show as new next time.')
 
 
 def problems(tickets):
@@ -190,7 +247,7 @@ def listing():
     except Exception as error:  # a failing command would stop the skill from loading in Claude Code
         print(f'The ticket list could not be read: {type(error).__name__}')
         return
-    seen = load(os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')).get('seen', {})
+    seen = recall()['seen']
     still_open = [t for t in tickets if not any(r.get('name') == CLOSED for r in t.get('reactions', []))]
     print(f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:')
     for t in still_open:
@@ -231,8 +288,7 @@ def reply(ts, path, flags):
 
 def answers(flags):
     channel, tok = channel_id(), token()
-    state_path = os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')
-    state = load(state_path)
+    state = recall()
     names, seen = state.setdefault('names', {}), state.setdefault('seen', {})
 
     def name(user):
@@ -281,7 +337,7 @@ def answers(flags):
     if not shown:
         print('No new replies.')
     print(f'{len(tickets)} tickets, {open_count} open.')
-    save(state_path, state)
+    remember(state)
 
 
 def main():
