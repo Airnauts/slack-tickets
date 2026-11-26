@@ -38,42 +38,19 @@ hand: `/plugin marketplace update airnauts`, then `/reload-plugins`.
 Copy or symlink `skills/ticket` into the agent's skills folder. For Codex that is `.agents/skills/` in the project,
 or `~/.agents/skills/` for every project.
 
-The script calls `slack.com`, so the agent's sandbox has to allow network access. Codex blocks it by default, and the
-script then says "Slack could not be reached". Where the agent can limit it, allow `slack.com` only.
+The setup steps say what such an agent needs as well: the variables in the shell it starts from, and network access
+to `slack.com`.
 
-## Set up Slack (once per workspace)
+## Set up
 
-1. Go to https://api.slack.com/apps, choose "Create New App", then "From a manifest", pick the workspace, and paste
-   [`slack-app-manifest.yaml`](slack-app-manifest.yaml), the file at the top of this repository.
-2. Click "Install to Workspace". A workspace that requires approval for apps needs an admin here.
-3. Copy the "Bot User OAuth Token" (it starts with `xoxb-`) from "OAuth & Permissions". Share it with teammates
-   through a password manager, never through chat or git.
-4. In the tickets channel, type `/invite @Tickets`.
+Ask Claude, or your agent, to "set up the tickets". It leads you through the steps one at a time, shows the Slack app
+manifest for you to copy, and checks the result in the same session. It never sees the token: you store it yourself,
+from your own terminal. The steps are in [`skills/ticket/references/setup.md`](skills/ticket/references/setup.md),
+and the manifest is [`skills/ticket/assets/slack-app-manifest.yaml`](skills/ticket/assets/slack-app-manifest.yaml).
 
-One app serves every tickets channel in the workspace. Invite it to each one.
-
-## Set up a project (once per project and person)
-
-Add two variables to the project's `.claude/settings.local.json`. That file is personal and is not committed.
-
-```json
-{
-  "env": {
-    "SLACK_TICKETS_CHANNEL": "C0123456789",
-    "SLACK_TICKETS_TOKEN": "xoxb-..."
-  }
-}
-```
-
-- The channel id is at the bottom of the channel's "About" panel in Slack.
-- To keep the token out of files, leave `SLACK_TICKETS_TOKEN` out and store it in the macOS Keychain:
-  `security add-generic-password -U -s slack-tickets -a slack -w` (it asks for the token without showing it).
-
-Another agent has no such file: export the channel id in the shell it starts from, and the token too unless it is in
-the Keychain. Keep the token out of your shell profile.
-
-Start a new Claude Code session and ask "check the tickets setup". Claude runs the check and says which channel and
-which app it will post as.
+In short: once per workspace, someone creates the Slack app from the manifest and shares its bot token through a
+password manager. Once per person, the token goes into the macOS Keychain. The app is invited to each tickets
+channel, and each project gets its channel's id, for one session or for good in `.claude/settings.local.json`.
 
 ## Without the channel id or the token
 
@@ -84,7 +61,7 @@ The skill still works with less set up, for a question or two:
 - **No token.** With a Slack connector in the session, Claude reads and posts through it, under your own name and one
   message at a time. In a channel shared with another organization the connector cannot send, so Claude creates one
   draft at a time and you send each from "Drafts & Sent" in Slack.
-- **Neither a token nor a connector.** Claude says what is missing and stops.
+- **Neither a token nor a connector.** Claude says what is missing and offers to lead you through the setup.
 
 For more than a couple of tickets, set the token up: the script posts a whole reviewed batch in one run and remembers
 which replies it has shown.
@@ -102,6 +79,7 @@ Claude runs it for you. By hand, with the two variables set:
 
 ```
 python3 skills/ticket/scripts/tickets.py --check               which channel, whose token
+python3 skills/ticket/scripts/tickets.py --setup               the setup steps and the Slack app manifest
 python3 skills/ticket/scripts/tickets.py --list                one line per open ticket
 python3 skills/ticket/scripts/tickets.py batch.json            dry run
 python3 skills/ticket/scripts/tickets.py batch.json --post     post the batch
