@@ -50,8 +50,11 @@ def channel_id():
 def token():
     value = os.environ.get('SLACK_TICKETS_TOKEN', '').strip()
     if not value:
-        found = subprocess.run(['security', 'find-generic-password', '-s', KEYCHAIN, '-w'], capture_output=True, text=True)
-        value = found.stdout.strip() if found.returncode == 0 else ''
+        try:
+            found = subprocess.run(['security', 'find-generic-password', '-s', KEYCHAIN, '-w'], capture_output=True, text=True)
+            value = found.stdout.strip() if found.returncode == 0 else ''
+        except FileNotFoundError:  # no Keychain outside macOS
+            pass
     if not value:
         sys.exit('No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain under "slack-tickets". See the README.')
     return value
