@@ -17,9 +17,13 @@ The repository is private, so git on your machine must be able to read it (an SS
 `gh auth setup-git`).
 
 ```
-/plugin marketplace add <owner>/slack-tickets
+/plugin marketplace add Airnauts/slack-tickets
 /plugin install slack-tickets@airnauts
 ```
+
+The repository is its own marketplace (named `airnauts`), so Claude Code pulls the plugin straight from it. If the
+first command fails with a git error and you use HTTPS, not SSH, for GitHub, start Claude Code with
+`CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` set.
 
 To get updates automatically, open `/plugin`, go to Marketplaces, and turn auto-update on for `airnauts`. To update by
 hand: `/plugin marketplace update airnauts`, then `/reload-plugins`.
