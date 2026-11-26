@@ -1,0 +1,524 @@
+"""--list, --answers, --reply, --post and --close, with a fake Slack. Dates and times are never asserted on:
+they print in local time. Every timestamp is in the past, because remembered timestamps in the future are ignored."""
+import itertools
+import os
+import re
+import unittest
+
+from helpers import CHANNEL, OTHER_CHANNEL, TicketsTestCase
+
+BOT = 'U0000000001'
+ANN = 'U0000000002'
+BEN = 'U0000000003'
+
+T1 = '1700000000.000100'
+T2 = '1700001000.000100'
+T3 = '1700002000.000100'
+
+TOP = '*Q: {question}*\n*Urgency:* :red_circle: Blocking · *Asked by:* {by}\n*Context:* Why it matters.'
+
+
+def top(question='Can we ship on Friday?', by='Jo Tester'):
+    return TOP.format(question=question, by=by)
+
+
+def ticket(ts, text=None, **extra):
+    """A ticket message as Slack returns it from the channel's history."""
+    return dict({'ts': ts, 'user': BOT, 'text': text or top()}, **extra)
+
+
+def lines_of(out):
+    return out.splitlines()
+
+
+class SlackTestCase(TicketsTestCase):
+    def setUp(self):
+        super().setUp()
+        self.set_channel()
+
+    def history(self, *messages):
+        self.slack.respond('conversations.history', {'ok': True, 'messages': list(messages)})
+
+    def remember_seen(self, seen):
+        self.write_json('.slack-tickets/state.json', {'seen': seen, 'names': {}})
+
+    def state(self):
+        return self.read_json('.slack-tickets/state.json')
+
+
+class ListingTests(SlackTestCase):
+    def listed(self):
+        result = self.run_main('--list')
+        self.assertIsNone(result.code)
+        return lines_of(result.out)
+
+    def test_the_header_counts_open_and_closed_tickets(self):
+        self.history(ticket(T1), ticket(T2, reactions=[{'name': 'white_check_mark', 'count': 1}]), ticket(T3))
+        header = self.listed()[0]
+        self.assertTrue(header.startswith(f'Channel {CHANNEL}: 2 open, 1 closed.'), header)
+
+    def test_an_open_ticket_has_its_question_urgency_asker_thread_and_ts(self):
+        self.history(ticket(T1, reply_count=2, reply_users=[BOT, ANN], latest_reply='1700000500.000100'))
+        line = self.listed()[1]
+        self.assertRegex(line, r'^- Can we ship on Friday\? \[Blocking; [^;]+ by Jo Tester; thread 2, others replied')
+        self.assertTrue(line.endswith(f'; ts {T1}]'), line)
+
+    def test_emoji_shortcodes_are_stripped_from_the_urgency(self):
+        self.history(ticket(T1))
+        line = self.listed()[1]
+        self.assertIn('[Blocking;', line)
+        self.assertNotIn(':red_circle:', line)
+
+    def test_a_ticket_nobody_replied_to_says_so(self):
+        self.history(ticket(T1))
+        self.assertIn('; thread 0, no reply yet; ', self.listed()[1])
+
+    def test_the_authors_own_details_reply_is_not_an_answer(self):
+        self.history(ticket(T1, reply_count=1, reply_users=[BOT], latest_reply='1700000100.000100'))
+        line = self.listed()[1]
+        self.assertIn('thread 1, no reply yet', line)
+        self.assertNotIn('NEW', line)
+
+    def test_a_reply_newer_than_what_was_seen_is_new(self):
+        self.history(ticket(T1, reply_count=2, reply_users=[BOT, ANN], latest_reply='1700000500.000100'))
+        self.remember_seen({T1: '1700000400.000100'})
+        self.assertIn('others replied, NEW since the last check;', self.listed()[1])
+
+    def test_a_reply_already_seen_is_not_new(self):
+        self.history(ticket(T1, reply_count=2, reply_users=[BOT, ANN], latest_reply='1700000500.000100'))
+        for seen in ('1700000500.000100', '1700000600.000100'):
+            with self.subTest(seen=seen):
+                self.remember_seen({T1: seen})
+                line = self.listed()[1]
+                self.assertIn('others replied;', line)
+                self.assertNotIn('NEW', line)
+
+    def test_a_reply_with_nothing_remembered_is_new(self):
+        self.history(ticket(T1, reply_count=2, reply_users=[BOT, ANN], latest_reply='1700000500.000100'))
+        self.assertIn('NEW since the last check', self.listed()[1])
+
+    def test_a_closed_ticket_is_not_listed(self):
+        self.history(ticket(T1, top('Is this closed?'), reactions=[{'name': 'white_check_mark', 'count': 1}]),
+                     ticket(T2, top('Is this open?')))
+        lines = self.listed()
+        self.assertEqual(len(lines), 2)
+        self.assertIn('Is this open?', lines[1])
+        self.assertNotIn('Is this closed?', '\n'.join(lines))
+
+    def test_other_reactions_do_not_close_a_ticket(self):
+        self.history(ticket(T1, reactions=[{'name': 'eyes', 'count': 1}]))
+        self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 1 open, 0 closed.'))
+
+    def test_messages_that_are_not_tickets_are_ignored(self):
+        self.history(ticket(T1, 'Good morning everyone'), ticket(T2, '  *Q: Indented one?*\n*Urgency:* x'),
+                     ticket(T3, 'Q: not bold start'))
+        lines = self.listed()
+        self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open, 0 closed.'), lines[0])
+        self.assertEqual(len(lines), 2)
+        self.assertIn('Indented one?', lines[1])
+
+    def test_tickets_are_listed_oldest_first_across_pages(self):
+        self.slack.respond('conversations.history',
+                           {'ok': True, 'messages': [ticket(T2, top('Second?'))], 'response_metadata': {'next_cursor': 'c2'}},
+                           {'ok': True, 'messages': [ticket(T1, top('First?'))]})
+        lines = self.listed()
+        self.assertIn('First?', lines[1])
+        self.assertIn('Second?', lines[2])
+        self.assertEqual(self.slack.made('conversations.history')[1]['cursor'], 'c2')
+
+    def test_a_link_in_the_question_shows_its_words(self):
+        self.history(ticket(T1, top('Is <https://example.com/doc|the brief> final?')))
+        self.assertIn('- Is the brief final? [', self.listed()[1])
+
+    def test_a_ticket_without_urgency_or_asker_still_lists(self):
+        self.history(ticket(T1, '*Q: Bare question?*'))
+        self.assertIn('- Bare question? [?; ', self.listed()[1])
+
+    def test_a_slack_call_that_exits_prints_one_line(self):
+        def refuse(**payload):
+            raise SystemExit('conversations.history: not_in_channel')
+        self.slack.respond('conversations.history', refuse)
+        result = self.run_main('--list')
+        self.assertIsNone(result.code)
+        self.assertEqual(lines_of(result.out),
+                         ['The ticket list could not be read: conversations.history: not_in_channel'])
+
+    def test_a_slack_call_that_raises_prints_one_line(self):
+        def fail(**payload):
+            raise RuntimeError('boom')
+        self.slack.respond('conversations.history', fail)
+        result = self.run_main('--list')
+        self.assertIsNone(result.code)
+        self.assertEqual(lines_of(result.out), ['The ticket list could not be read: RuntimeError'])
+
+    def test_no_channel_prints_one_line_and_calls_nothing(self):
+        del os.environ['SLACK_TICKETS_CHANNEL']
+        result = self.run_main('--list')
+        self.assertIsNone(result.code)
+        self.assertEqual(len(lines_of(result.out)), 1)
+        self.assertTrue(result.out.startswith('The ticket list could not be read: SLACK_TICKETS_CHANNEL is not set'))
+        self.assertEqual(self.slack.calls, [])
+
+    def test_a_broken_state_file_does_not_stop_the_list(self):
+        self.write('.slack-tickets/state.json', '{not json')
+        self.history(ticket(T1))
+        self.assertIn('Can we ship on Friday?', self.listed()[1])
+
+
+class AnswersTests(SlackTestCase):
+    def setUp(self):
+        super().setUp()
+        self.latest = '1700000300.000100'
+        self.history(
+            ticket(T1, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest),
+            ticket(T2, top('Is the old one closed?', 'Kim'), reactions=[{'name': 'white_check_mark', 'count': 1}]))
+        self.thread = [
+            ticket(T1),
+            {'ts': '1700000100.000100', 'user': BOT, 'text': '*Details*\nWhat led to this.'},
+            {'ts': '1700000200.000100', 'user': ANN, 'text': 'Yes, <@U0000000003> agrees. See <https://example.com/a|the doc>.'},
+            {'ts': self.latest, 'user': BEN, 'text': 'Line one\nLine two', 'files': [{'id': 'F1'}, {'id': 'F2'}]},
+        ]
+        self.slack.respond('conversations.replies', lambda **payload: {'ok': True, 'messages': self.thread})
+        people = {ANN: {'real_name': 'Ann Client'}, BEN: {'name': 'ben'}}
+        self.slack.respond('users.info', lambda user, **payload: {'ok': True, 'user': people.get(user, {})})
+
+    def answers(self, *flags):
+        result = self.run_main('--answers', *flags)
+        self.assertIsNone(result.code)
+        return result.out
+
+    def test_new_replies_show_with_resolved_names(self):
+        out = self.answers()
+        self.assertIn('[open] Q: Can we ship on Friday?\n  Urgency: :red_circle: Blocking | asked ', out)
+        self.assertRegex(out, rf' by Jo Tester \| ts {re.escape(T1)}\n')
+        self.assertRegex(out, r'    Ann Client, [^:]+:\d\d: Yes, @ben agrees\. See the doc\.\n')
+        self.assertRegex(out, r'    ben, [^:]+:\d\d: Line one\n      Line two \[2 file\(s\) attached\]\n')
+
+    def test_the_tickets_details_reply_is_not_shown(self):
+        out = self.answers()
+        self.assertNotIn('What led to this', out)
+
+    def test_details_without_bold_is_skipped_too(self):
+        self.thread[1]['text'] = 'Details\nWhat led to this.'
+        self.assertNotIn('What led to this', self.answers())
+
+    def test_a_ticket_with_only_its_details_reply_shows_nothing(self):
+        self.thread = self.thread[:2]
+        out = self.answers()
+        self.assertIn('No new replies.', out)
+        self.assertNotIn('[open]', out)
+
+    def test_the_last_line_counts_tickets_and_open_ones(self):
+        self.assertEqual(lines_of(self.answers())[-1], '2 tickets, 1 open.')
+
+    def test_a_closed_ticket_without_replies_is_not_shown(self):
+        self.assertNotIn('Is the old one closed?', self.answers())
+
+    def test_a_second_run_has_no_new_replies(self):
+        self.answers()
+        self.slack.calls.clear()
+        out = self.answers()
+        self.assertEqual(lines_of(out), ['No new replies.', '2 tickets, 1 open.'])
+        self.assertEqual(self.slack.made('conversations.replies'), [])
+
+    def test_what_was_shown_is_remembered_in_the_project(self):
+        self.answers()
+        state = self.state()
+        self.assertEqual(state['seen'], {T1: self.latest})
+        self.assertEqual(state['names'][ANN], 'Ann Client')
+        self.assertTrue(os.path.exists(os.path.join('.slack-tickets', '.gitignore')))
+
+    def test_only_replies_newer_than_what_was_seen_are_shown(self):
+        self.remember_seen({T1: '1700000250.000100'})
+        out = self.answers()
+        self.assertNotIn('Ann Client', out)
+        self.assertIn('Line one', out)
+
+    def test_a_newer_reply_after_a_run_shows_on_the_next_run(self):
+        self.answers()
+        self.thread.append({'ts': '1700000400.000100', 'user': ANN, 'text': 'One more thing'})
+        self.history(ticket(T1, reply_count=4, reply_users=[BOT, ANN, BEN], latest_reply='1700000400.000100'))
+        out = self.answers()
+        self.assertIn('One more thing', out)
+        self.assertNotIn('Line one', out)
+
+    def test_peek_does_not_advance_what_was_seen(self):
+        first, second = self.answers('--peek'), self.answers('--peek')
+        self.assertIn('Line one', first)
+        self.assertIn('Line one', second)
+        self.assertEqual(self.state()['seen'], {})
+        self.assertIn('Line one', self.answers())
+        self.assertIn('No new replies.', self.answers())
+
+    def test_all_shows_every_ticket_marked_open_or_closed(self):
+        out = self.answers('--all')
+        self.assertIn('[open] Q: Can we ship on Friday?', out)
+        self.assertIn('[closed] Q: Is the old one closed?', out)
+        self.assertIn('Ann Client', out)
+        self.assertNotIn('No new replies.', out)
+        self.assertEqual(lines_of(out)[-1], '2 tickets, 1 open.')
+
+    def test_all_shows_replies_that_were_already_seen_and_remembers_nothing(self):
+        self.remember_seen({T1: self.latest})
+        self.assertIn('Line one', self.answers('--all'))
+        self.assertEqual(self.state()['seen'], {T1: self.latest})
+
+    def test_a_name_is_looked_up_once(self):
+        self.answers()
+        self.assertEqual(sorted(p['user'] for p in self.slack.made('users.info')), [ANN, BEN])
+
+    def test_a_name_without_a_profile_falls_back_to_the_id(self):
+        self.thread[2]['user'] = 'U0000000009'
+        self.assertIn('U0000000009, ', self.answers())
+
+    def test_a_reply_without_a_user_is_attributed_to_someone(self):
+        del self.thread[2]['user']
+        self.assertIn('    someone, ', self.answers())
+
+
+class ReplyTests(SlackTestCase):
+    def note(self, text, name='note.txt'):
+        return self.write(name, text)
+
+    def test_a_dry_run_prints_the_text_and_posts_nothing(self):
+        result = self.run_main('--reply', T1, self.note('  We will go ahead with the default.\n'))
+        self.assertIsNone(result.code)
+        self.assertEqual(result.out, f'--- reply in the thread of {T1}\nWe will go ahead with the default.\n\n'
+                                     f'Dry run for {CHANNEL}, nothing posted. Add --post to post.\n')
+        self.assertEqual(self.slack.calls, [])
+
+    def test_a_reply_that_is_refused(self):
+        refused = {
+            'a mention': '<@U0000000001> please look',
+            'a broadcast': '<!here> look',
+            'an empty text': '  \n ',
+            'a text that is too long': 'x' * 3501,
+        }
+        for why, text in refused.items():
+            for flags in ((), ('--post',)):
+                with self.subTest(why=why, flags=flags):
+                    result = self.run_main('--reply', T1, self.note(text), *flags)
+                    self.assertTrue(str(result.code).startswith('Not posted: a reply needs some text'), result)
+                    self.assertEqual(self.slack.calls, [])
+
+    def test_a_malformed_timestamp_is_refused(self):
+        for ts in ('123', '1700000000', '1700000000.1', 'abc.def', '1700000000.000100x'):
+            with self.subTest(ts=ts):
+                result = self.run_main('--reply', ts, self.note('Fine text'), '--post')
+                self.assertTrue(str(result.code).startswith("Not posted: the first argument is the ticket's timestamp"))
+                self.assertEqual(self.slack.calls, [])
+
+    def test_a_timestamp_whose_parent_is_not_a_ticket_is_refused(self):
+        parents = {
+            'chatter': {'ts': T1, 'text': 'Good morning'},
+            'a reply inside a thread': {'ts': T2, 'text': '*Q: Something?*'},
+        }
+        for why, parent in parents.items():
+            with self.subTest(why=why):
+                self.slack.calls.clear()
+                self.slack.respond('conversations.replies', {'ok': True, 'messages': [parent]})
+                result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
+                self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
+                self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_a_reply_to_a_ticket_is_posted_in_its_thread(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1)]})
+        self.slack.respond('chat.postMessage', {'ok': True, 'ts': '1700000900.000100', 'channel': CHANNEL})
+        result = self.run_main('--reply', T1, self.note('*Update* (Jo, today): we went ahead.\n'), '--post')
+        self.assertIsNone(result.code)
+        self.assertEqual(result.out, f'Replied in the thread of {T1} (1700000900.000100).\n')
+        self.assertEqual(self.slack.methods(), ['conversations.replies', 'chat.postMessage'])
+        self.assertEqual(self.slack.made('conversations.replies')[0]['ts'], T1)
+        self.assertEqual(self.slack.made('chat.postMessage')[0], {
+            'channel': CHANNEL, 'thread_ts': T1, 'text': '*Update* (Jo, today): we went ahead.',
+            'unfurl_links': False, 'unfurl_media': False})
+
+
+class PostTests(SlackTestCase):
+    def batch(self, tickets=None, name='batch.json', **extra):
+        tickets = tickets or [
+            {'id': 'ship-friday', 'top': top(), 'details': '*Details*\nWhat led to this.'},
+            {'id': 'wording', 'top': top('Is the wording final?', 'Kim'), 'details': '*Details*\nThe words.'},
+        ]
+        return self.write_json(name, dict({'tickets': tickets}, **extra))
+
+    def fake_post(self):
+        """Slack answering each message with the next timestamp, and a link for each ticket."""
+        counter = itertools.count(1)
+        self.slack.respond('chat.postMessage', lambda **payload: {
+            'ok': True, 'ts': f'{1700000000 + next(counter)}.000100', 'channel': OTHER_CHANNEL})
+        self.slack.respond('chat.getPermalink', lambda channel, message_ts, **payload: {
+            'ok': True, 'permalink': f'https://example.com/{channel}/p{message_ts}'})
+
+    def test_a_dry_run_prints_each_ticket_and_posts_nothing(self):
+        path = self.batch()
+        result = self.run_main(path)
+        self.assertIsNone(result.code)
+        self.assertIn('--- ship-friday (to post)\n' + top() + '\n  [thread]\n*Details*\nWhat led to this.\n', result.out)
+        self.assertIn('--- wording (to post)\n', result.out)
+        self.assertEqual(lines_of(result.out)[-1], f'Dry run: 2 tickets for {CHANNEL}, nothing posted. Add --post to post.')
+        self.assertEqual(self.slack.calls, [])
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, 'batch.result.json')))
+
+    def test_a_dry_run_marks_what_is_already_posted(self):
+        path = self.batch()
+        self.write_json('batch.result.json', {'ship-friday': {'ts': T1, 'details_ts': T2}, 'wording': {'ts': T3}})
+        out = self.run_main(path).out
+        self.assertIn('--- ship-friday (already posted)', out)
+        self.assertIn('--- wording (to post)', out)
+
+    def test_problems_names_each_refusal(self):
+        good = {'id': 'a', 'top': top(), 'details': 'Some details'}
+        cases = {
+            'a mention in the top': (dict(good, top=top() + ' <@U0000000001>'), 'nobody is mentioned'),
+            'a broadcast in the details': (dict(good, details='<!here> look'), 'nobody is mentioned'),
+            'no asker': (dict(good, top='*Q: Who asked?*\n*Urgency:* No rush'), 'says who asked'),
+            'an empty asker': (dict(good, top='*Q: Who asked?*\n*Asked by:* \n'), 'says who asked'),
+            'no details': (dict(good, details='  '), 'a: both parts are required'),
+            'no top': (dict(good, top=''), 'a: both parts are required'),
+            'too long': (dict(good, details='x' * 3501), 'too long for one message'),
+        }
+        for why, (bad, expected) in cases.items():
+            with self.subTest(why=why):
+                found = self.tickets.problems([bad])
+                self.assertTrue(any(expected in f for f in found), found)
+
+    def test_problems_accepts_a_good_ticket_with_or_without_bold_label(self):
+        for line in ('*Asked by:* Jo', 'Asked by: Jo', '*Asked by:*Jo'):
+            with self.subTest(line=line):
+                found = self.tickets.problems([{'id': 'a', 'top': f'*Q: Yes?*\n{line}', 'details': 'x'}])
+                self.assertEqual(found, [])
+
+    def test_problems_refuses_duplicate_or_missing_ids(self):
+        good = {'top': top(), 'details': 'x'}
+        for why, ids in (('duplicates', ['a', 'a']), ('an empty id', ['a', '']), ('no id', ['a', None])):
+            with self.subTest(why=why):
+                found = self.tickets.problems([dict(good, id=i) for i in ids])
+                self.assertIn('every ticket needs its own id', found)
+        self.assertEqual(self.tickets.problems([dict(good, id='a'), dict(good, id='b')]), [])
+
+    def test_a_refused_batch_stops_before_any_call(self):
+        path = self.batch([{'id': 'a', 'top': top() + ' <@U0000000001>', 'details': 'x'}])
+        for flags in ((), ('--post',)):
+            with self.subTest(flags=flags):
+                result = self.run_main(path, *flags)
+                self.assertTrue(result.code.startswith('Not posted:\n  a: nobody is mentioned in a ticket'), result.code)
+                self.assertEqual(self.slack.calls, [])
+
+    def test_a_batch_naming_another_channel_is_refused(self):
+        result = self.run_main(self.batch(channel=OTHER_CHANNEL), '--post')
+        self.assertEqual(result.code, 'Not posted: the batch names another channel. Take "channel" out of the batch.')
+        self.assertEqual(self.slack.calls, [])
+
+    def test_posting_sends_each_top_then_its_details_in_its_thread(self):
+        self.fake_post()
+        path = self.batch()
+        result = self.run_main(path, '--post')
+        self.assertIsNone(result.code)
+        sent = self.slack.made('chat.postMessage')
+        self.assertEqual(self.slack.methods(), ['chat.postMessage', 'chat.postMessage', 'chat.getPermalink'] * 2)
+        self.assertEqual(sent[0], {'channel': CHANNEL, 'text': top(), 'unfurl_links': False, 'unfurl_media': False})
+        self.assertEqual(sent[1]['thread_ts'], '1700000001.000100')
+        self.assertEqual(sent[1]['text'], '*Details*\nWhat led to this.')
+        self.assertEqual(sent[1]['channel'], OTHER_CHANNEL)  # the conversation id Slack answered with
+        self.assertNotIn('thread_ts', sent[2])
+        self.assertEqual(sent[3]['thread_ts'], '1700000003.000100')
+        self.assertEqual(self.sleeps.call_count, 4)
+
+    def test_posting_writes_the_result_beside_the_batch(self):
+        self.fake_post()
+        path = self.batch()
+        result = self.run_main(path, '--post')
+        saved = self.read_json('batch.result.json')
+        self.assertEqual(saved['ship-friday'], {
+            'ts': '1700000001.000100', 'channel': OTHER_CHANNEL, 'details_ts': '1700000002.000100',
+            'link': 'https://example.com/C1111111111/p1700000001.000100'})
+        self.assertEqual(sorted(saved), ['ship-friday', 'wording'])
+        self.assertIn('ship-friday: https://example.com/C1111111111/p1700000001.000100\n', result.out)
+        self.assertEqual(lines_of(result.out)[-1], f'Posted 2 tickets. Results: {os.path.join(self.tmp, "batch.result.json")}')
+
+    def test_a_second_run_posts_nothing_again(self):
+        self.fake_post()
+        path = self.batch()
+        self.run_main(path, '--post')
+        self.slack.calls.clear()
+        result = self.run_main(path, '--post')
+        self.assertIsNone(result.code)
+        self.assertEqual(self.slack.calls, [])
+        self.assertIn('Posted 2 tickets.', result.out)
+
+    def test_a_run_that_stopped_halfway_posts_only_what_is_missing(self):
+        self.fake_post()
+        path = self.batch()
+        self.write_json('batch.result.json', {
+            'ship-friday': {'ts': T1, 'channel': OTHER_CHANNEL, 'details_ts': T2, 'link': 'https://example.com/x'},
+            'wording': {'ts': T3, 'channel': OTHER_CHANNEL}})
+        self.run_main(path, '--post')
+        sent = self.slack.made('chat.postMessage')
+        self.assertEqual(len(sent), 1)
+        self.assertEqual((sent[0]['channel'], sent[0]['thread_ts'], sent[0]['text']),
+                         (OTHER_CHANNEL, T3, '*Details*\nThe words.'))
+        self.assertEqual([p['message_ts'] for p in self.slack.made('chat.getPermalink')], [T3])
+
+    def test_a_batch_without_a_json_name_gets_a_result_name_appended(self):
+        self.fake_post()
+        path = self.batch(name='batch.txt')
+        self.run_main(path, '--post')
+        self.assertTrue(os.path.exists(path + '.result.json'))
+
+    def test_a_failed_send_keeps_what_was_posted_before_it(self):
+        sends = []
+
+        def second_fails(**payload):
+            sends.append(payload)
+            if len(sends) == 2:
+                raise SystemExit('chat.postMessage: ratelimited')
+            return {'ok': True, 'ts': '1700000001.000100', 'channel': CHANNEL}
+        self.slack.respond('chat.postMessage', second_fails)
+        result = self.run_main(self.batch(), '--post')
+        self.assertEqual(result.code, 'chat.postMessage: ratelimited')
+        self.assertEqual(self.read_json('batch.result.json'), {'ship-friday': {'ts': '1700000001.000100', 'channel': CHANNEL}})
+
+
+class MainTests(SlackTestCase):
+    def test_close_adds_the_check_mark_reaction(self):
+        self.slack.respond('reactions.add', {'ok': True})
+        result = self.run_main('--close', T1)
+        self.assertIsNone(result.code)
+        self.assertEqual(result.out, f'Closed {T1}.\n')
+        self.assertEqual(self.slack.made('reactions.add'), [{'channel': CHANNEL, 'timestamp': T1, 'name': 'white_check_mark'}])
+
+    def test_close_needs_the_channel(self):
+        del os.environ['SLACK_TICKETS_CHANNEL']
+        result = self.run_main('--close', T1)
+        self.assertTrue(result.code.startswith('SLACK_TICKETS_CHANNEL is not set'))
+        self.assertEqual(self.slack.calls, [])
+
+    def test_check_says_the_channel_and_whose_token_without_printing_it(self):
+        self.slack.respond('auth.test', {'ok': True, 'user': 'tickets', 'team': 'Acme', 'bot_id': 'B0000000001'})
+        result = self.run_main('--check')
+        self.assertEqual(result.out, f'Channel {CHANNEL}.\nPosting as tickets in Acme (a bot)\n')
+        self.assertNotIn('xoxb-test', result.out)
+        self.assertEqual(self.slack.calls[0].tok, 'xoxb-test')
+
+    def test_no_arguments_print_the_usage(self):
+        result = self.run_main()
+        self.assertIn('dry run: prints what would be posted', result.code)
+
+    # The script treats `--reply <ts>` without a note file as a batch file named <ts>: a dry run of 0 tickets, exit 0.
+    @unittest.expectedFailure
+    def test_a_reply_without_its_note_file_prints_the_usage(self):
+        result = self.run_main('--reply', T1)
+        self.assertEqual(result.code, self.tickets.__doc__)
+        self.assertEqual(self.slack.calls, [])
+
+    def test_the_channel_flag_works_in_process_too(self):
+        del os.environ['SLACK_TICKETS_CHANNEL']
+        self.slack.respond('conversations.history', {'ok': True, 'messages': []})
+        result = self.run_main('--list', f'--channel={OTHER_CHANNEL}')
+        self.assertTrue(result.out.startswith(f'Channel {OTHER_CHANNEL}: 0 open, 0 closed.'))
+        self.assertEqual(self.slack.made('conversations.history')[0]['channel'], OTHER_CHANNEL)
+
+
+if __name__ == '__main__':
+    unittest.main()
