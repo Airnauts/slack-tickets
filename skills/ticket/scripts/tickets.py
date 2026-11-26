@@ -6,6 +6,8 @@
   tickets.py --answers             replies that arrived since the last check, and how many tickets are open
   tickets.py --answers --all       every ticket with every reply
   tickets.py --answers --peek      as --answers, without remembering what was shown
+  tickets.py --reply <ts> note.txt         dry run of a reply in a ticket's thread (our own update or decision)
+  tickets.py --reply <ts> note.txt --post  posts it
   tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
   tickets.py --check               says which channel and whose token (never prints the token)
 
@@ -155,6 +157,26 @@ def post(path, flags):
     print(f'Posted {len(tickets)} tickets. Results: {result_path}')
 
 
+def reply(ts, path, flags):
+    with open(path, encoding='utf-8') as source:
+        text = source.read().strip()
+    if not text or '<@' in text or '<!' in text or len(text) > 3500:
+        sys.exit('Not posted: a reply needs some text, mentions nobody and fits one message.')
+    if not re.fullmatch(r'\d{10}\.\d{6}', ts):
+        sys.exit('Not posted: the first argument is the ticket\'s timestamp, as printed by --answers (like 1795630143.783399).')
+    channel = channel_id()
+    if '--post' not in flags:
+        print(f'--- reply in the thread of {ts}\n{text}\n\nDry run for {channel}, nothing posted. Add --post to post.')
+        return
+    tok = token()
+    # Only a ticket's thread: the timestamp must be a top-level message that is a ticket.
+    parent = call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages', [{}])[0]
+    if parent.get('ts') != ts or not (parent.get('text') or '').lstrip().startswith('*Q:'):
+        sys.exit('Not posted: that timestamp is not a ticket in this channel.')
+    sent = call('chat.postMessage', tok, channel=channel, thread_ts=ts, text=text, unfurl_links=False, unfurl_media=False)
+    print(f'Replied in the thread of {ts} ({sent["ts"]}).')
+
+
 def answers(flags):
     channel, tok = channel_id(), token()
     state_path = os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')
@@ -225,6 +247,8 @@ def main():
         print(f'Channel {channel_id()}. Posting as {who.get("user")} in {who.get("team")}' + (' (a bot)' if who.get('bot_id') else ' (a person)'))
     elif '--answers' in flags:
         answers(flags)
+    elif '--reply' in flags and len(args) == 2:
+        reply(args[0], args[1], flags)
     elif '--close' in flags and len(args) == 1:
         call('reactions.add', token(), channel=channel_id(), timestamp=args[0], name=CLOSED)
         print(f'Closed {args[0]}.')

@@ -153,5 +153,28 @@ It skips each ticket's own Details reply and shows names. Then:
 3. When the answer is recorded, close the ticket with `--close <ts>`.
 4. A ticket with no answer is never nudged without the user's go. A nudge is a reply in the thread, not a new ticket.
 
-Replies in a thread (a follow-up, a nudge, a thanks) are posted by the user in Slack, or as a draft through a Slack
-connector if the session has one. The script posts tickets only.
+## Our own decisions after a ticket is posted
+
+A ticket's thread is the record of that question. **Whatever we decide about it after it was posted goes into its
+thread**, so the client reads the current state there and nobody answers a question that has moved on. This covers:
+
+- we went ahead with the default the ticket announced, or with a different one;
+- we found the answer ourselves, or the question no longer matters;
+- the user decided something in conversation that changes what we ask or what we will do;
+- a date in the ticket passed, or its urgency changed.
+
+Whenever such a decision is made in a session, check whether an open ticket is about it (`--answers --all` lists
+them) and propose the update without being asked. Write it as one short reply:
+
+```
+*Update* (<name>, <date>): <what we decided, in one or two plain sentences>.
+<What it means for the question: "The question is still open." | "No answer is needed any more." | "We still need X.">
+```
+
+Put the text in a scratch file and run `tickets.py --reply <ts> <file>` for a dry run; show it to the user; on
+their go, add `--post`. Mention nobody. Never rewrite the ticket itself: the top-level message stays as it was asked,
+and the history lives in the thread. If the update means no answer is needed, close the ticket with `--close <ts>`
+after posting it.
+
+The same command posts any other reply of ours in a thread (a follow-up question, a nudge, a thanks), always on the
+user's go for the text shown.
