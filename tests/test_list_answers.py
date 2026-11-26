@@ -16,6 +16,7 @@ T2 = '1700001000.000100'
 T3 = '1700002000.000100'
 
 TOP = '*Q: {question}*\n*Urgency:* :red_circle: Blocking · *Asked by:* {by}\n*Context:* Why it matters.'
+OLD_TOP = '*Q: {question}*\nUrgency: 🔴 Blocking\nOur decision: We will ship.\nContext: Why it matters.'
 
 
 def top(question='Can we ship on Friday?', by='Jo Tester'):
@@ -25,6 +26,11 @@ def top(question='Can we ship on Friday?', by='Jo Tester'):
 def ticket(ts, text=None, **extra):
     """A ticket message as Slack returns it from the channel's history."""
     return dict({'ts': ts, 'user': BOT, 'text': text or top()}, **extra)
+
+
+def said(ts, user, text):
+    """A message by a person in the channel, as Slack returns it from the channel's history."""
+    return {'ts': ts, 'user': user, 'text': text}
 
 
 def lines_of(out):
@@ -130,9 +136,35 @@ class ListingTests(SlackTestCase):
         self.history(ticket(T1, top('Is <https://example.com/doc|the brief> final?')))
         self.assertIn('- Is the brief final? [', self.listed()[1])
 
-    def test_a_ticket_without_urgency_or_asker_still_lists(self):
+    def test_a_message_that_only_starts_like_a_ticket_is_left_out_and_counted(self):
+        self.history(ticket(T1), said(T2, ANN, '*Q:* does anyone have the slides?'))
+        lines = self.listed()
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
+        self.assertNotIn('slides', '\n'.join(lines))
+        self.assertEqual(lines[-1], 'Not tickets, though they start with *Q: (no Urgency or Asked by field), in what was read: 1.')
+
+    def test_an_old_format_ticket_is_listed(self):
+        self.history(ticket(T1, OLD_TOP.format(question='Can we ship on Friday?')))
+        line = self.listed()[1]
+        self.assertRegex(line, r'^- Can we ship on Friday\? \[🔴 Blocking; [^;]+; thread 0, no reply yet; ts ')
+        self.assertNotIn(' by ', line)
+
+    def test_a_ticket_with_only_urgency_or_only_asked_by_is_listed(self):
+        for text in ('*Q: A?*\nAsked by: Jo', '*Q: A?*\n*Urgency:* No rush'):
+            with self.subTest(text=text):
+                self.history(ticket(T1, text))
+                lines = self.listed()
+                self.assertEqual(len(lines), 2)
+                self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
+                self.assertIn('- A? [', lines[1])
+
+    def test_a_bare_question_is_left_out_and_counted(self):
         self.history(ticket(T1, '*Q: Bare question?*'))
-        self.assertIn('- Bare question? [?; ', self.listed()[1])
+        lines = self.listed()
+        self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 0 open'), lines[0])
+        self.assertTrue(lines[-1].endswith(': 1.'), lines[-1])
+        self.assertNotIn('Bare question?', '\n'.join(lines[:-1]))
 
     def test_a_slack_call_that_exits_prints_one_line(self):
         def refuse(**payload):
@@ -226,6 +258,23 @@ class AnswersTests(SlackTestCase):
     def test_messages_without_a_user_or_bot_id_do_not_share_an_author(self):
         self.authored_by_bots(None, None)
         self.assertIn('What led to this', self.answers())
+
+    def test_an_old_format_ticket_and_its_plain_details(self):
+        latest = '1700000200.000100'
+        parent = ticket(T1, OLD_TOP.format(question='Can we ship on Friday?'), reply_count=2, reply_users=[BOT, ANN],
+                        latest_reply=latest)
+        self.history(parent)
+        self.thread = [parent, {'ts': '1700000100.000100', 'user': BOT, 'text': 'Details\nWhat led'},
+                       {'ts': latest, 'user': ANN, 'text': 'Yes'}]
+        out = self.answers()
+        self.assertIn('[open] Q: Can we ship on Friday?\n  Urgency: 🔴 Blocking | asked ', out)
+        self.assertIn('Yes', out)
+        self.assertNotIn('What led', out)
+
+    def test_answers_count_what_only_starts_like_a_ticket(self):
+        self.history(ticket(T1), said(T3, ANN, '*Q:* hi'))
+        out = lines_of(self.answers())
+        self.assertTrue(out[-2].endswith(': 1.'), out)
 
     def test_a_ticket_with_only_its_details_reply_shows_nothing(self):
         self.thread = self.thread[:2]
@@ -373,6 +422,7 @@ class ReplyTests(SlackTestCase):
         parents = {
             'chatter': {'ts': T1, 'text': 'Good morning'},
             'a reply inside a thread': {'ts': T2, 'text': '*Q: Something?*'},
+            'a message that only starts like one': {'ts': T1, 'text': '*Q:* anyone?'},
         }
         for why, parent in parents.items():
             with self.subTest(why=why):
@@ -393,6 +443,12 @@ class ReplyTests(SlackTestCase):
         result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
         self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
         self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_a_reply_to_an_old_format_ticket_is_posted(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, OLD_TOP.format(question='Can we ship?'))]})
+        self.slack.respond('chat.postMessage', {'ok': True, 'ts': '1700000900.000100', 'channel': CHANNEL})
+        result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
+        self.assertIn('Replied in the thread of', result.out)
 
     def test_a_reply_to_a_ticket_is_posted_in_its_thread(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1)]})
@@ -589,6 +645,7 @@ class MainTests(SlackTestCase):
         parents = {
             'chatter': {'ts': T1, 'text': 'Good morning'},
             'a reply inside a thread': {'ts': T2, 'text': '*Q: Something?*'},
+            'a message that only starts like one': {'ts': T1, 'text': '*Q:* anyone?'},
         }
         for why, parent in parents.items():
             with self.subTest(why=why):

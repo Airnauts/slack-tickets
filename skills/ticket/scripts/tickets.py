@@ -374,7 +374,20 @@ def fields(lines):
     return [re.sub(r'^\*([^*:]+:)\*', r'\1', part.strip()) for line in lines for part in line.split('\u00b7')]
 
 
+def is_ticket(message):
+    """A ticket's first message: it starts with *Q: and has an Urgency or an Asked by field, bold or not."""
+    lines = (message.get('text') or '').lstrip().split('\n')
+    return lines[0].startswith('*Q:') and any(part.startswith(('Urgency:', 'Asked by:')) for part in fields(lines[1:]))
+
+
+def lookalikes(messages):
+    """The line that counts messages starting like a ticket that is_ticket() left out, so a wrong rule shows."""
+    found = sum(1 for m in messages if (m.get('text') or '').lstrip().startswith('*Q:') and not is_ticket(m))
+    return [f'Not tickets, though they start with *Q: (no Urgency or Asked by field), in what was read: {found}.'] if found else []
+
+
 def history(channel, tok):
+    """Every top-level message in the channel, oldest first."""
     messages, cursor = [], None
     while True:
         page = call('conversations.history', tok, read=True, channel=channel, limit=200, **({'cursor': cursor} if cursor else {}))
@@ -382,7 +395,7 @@ def history(channel, tok):
         cursor = page.get('response_metadata', {}).get('next_cursor')
         if not cursor:
             break
-    return sorted((m for m in messages if (m.get('text') or '').lstrip().startswith('*Q:')), key=lambda m: float(m['ts']))
+    return sorted(messages, key=lambda m: float(m['ts']))
 
 
 def replies(channel, tok, ts):
@@ -397,40 +410,48 @@ def replies(channel, tok, ts):
 
 
 def listing():
-    """One line per open ticket, from one call to Slack. Claude Code loads it into the skill's text, so it never exits with an error."""
+    """One line per open ticket. Claude Code loads it into the skill's text, so it never exits with an error."""
     try:
-        channel, tok = channel_id(), token()
-        tickets = history(channel, tok)
+        lines = list_lines()
     except SystemExit as stop:
-        print(f'The ticket list could not be read: {stop.code}')
-        return
+        lines = [f'The ticket list could not be read: {stop.code}']
     except Exception as error:  # a failing command would stop the skill from loading in Claude Code
-        print(f'The ticket list could not be read: {type(error).__name__}')
-        return
+        lines = [f'The ticket list could not be read: {type(error).__name__}']
+    print('\n'.join(lines))
+
+
+def list_lines():
+    channel, tok = channel_id(), token()
+    messages = history(channel, tok)
+    tickets = [m for m in messages if is_ticket(m)]
     seen = recall()['seen']
     still_open = [t for t in tickets if not any(r.get('name') == CLOSED for r in t.get('reactions', []))]
-    print(f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:')
-    for t in still_open:
-        lines = re.sub(r'<[^>|]*\|([^>]*)>', r'\1', t.get('text') or '').split('\n')
-        parts = fields(lines[1:])
-        level = next((part[len('Urgency:'):].strip() for part in parts if part.startswith('Urgency:')), '?')
-        level = re.sub(r':[a-z_]+:', '', level).strip() or level
-        by = next((part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
-        day = datetime.datetime.fromtimestamp(float(t['ts'])).strftime('%b %d')
-        thread = t.get('reply_count', 0)
-        # The ticket's own Details reply comes from its author; anyone else in the thread is an answer or a routing tag.
-        others = [u for u in t.get('reply_users', []) if u != t.get('user')]
-        unread = bool(others) and float(t.get('latest_reply', '0')) > float(seen.get(t['ts'], '0'))
-        fresh = (', others replied' if others else ', no reply yet') + (', NEW since the last check' if unread else '')
-        question = lines[0].strip('* ').removeprefix('Q:').strip()
-        print(f'- {question} [{level}; {day}{" by " + by if by else ""}; thread {thread}{fresh}; ts {t["ts"]}]')
+    lines = [f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:']
+    return lines + [ticket_line(t, seen) for t in still_open] + lookalikes(messages)
+
+
+def ticket_line(t, seen):
+    """The --list line of one open ticket."""
+    lines = re.sub(r'<[^>|]*\|([^>]*)>', r'\1', t.get('text') or '').split('\n')
+    parts = fields(lines[1:])
+    level = next((part[len('Urgency:'):].strip() for part in parts if part.startswith('Urgency:')), '?')
+    level = re.sub(r':[a-z_]+:', '', level).strip() or level
+    by = next((part[len('Asked by:'):].strip() for part in parts if part.startswith('Asked by:')), '')
+    day = datetime.datetime.fromtimestamp(float(t['ts'])).strftime('%b %d')
+    thread = t.get('reply_count', 0)
+    # The ticket's own Details reply comes from its author; anyone else in the thread is an answer or a routing tag.
+    others = [u for u in t.get('reply_users', []) if u != t.get('user')]
+    unread = bool(others) and float(t.get('latest_reply', '0')) > float(seen.get(t['ts'], '0'))
+    fresh = (', others replied' if others else ', no reply yet') + (', NEW since the last check' if unread else '')
+    question = lines[0].strip('* ').removeprefix('Q:').strip()
+    return f'- {question} [{level}; {day}{" by " + by if by else ""}; thread {thread}{fresh}; ts {t["ts"]}]'
 
 
 def ticket_at(ts, tok, channel):
     """The message at ts when it is a top-level message that is a ticket, else None."""
     parent = (call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages') or [{}])[0]
     top_level = parent.get('thread_ts', ts) == ts
-    return parent if parent.get('ts') == ts and top_level and (parent.get('text') or '').lstrip().startswith('*Q:') else None
+    return parent if parent.get('ts') == ts and top_level and is_ticket(parent) else None
 
 
 def reply(ts, path, flags):
@@ -489,7 +510,8 @@ def answers(flags):
     def when(ts):
         return datetime.datetime.fromtimestamp(float(ts)).strftime('%b %d %H:%M')
 
-    tickets = history(channel, tok)
+    messages = history(channel, tok)
+    tickets = [m for m in messages if is_ticket(m)]
 
     show_all = '--all' in flags
     open_count, shown = 0, 0
@@ -523,6 +545,8 @@ def answers(flags):
             seen[ticket['ts']] = latest
     if not shown:
         print('No new replies.')
+    for line in lookalikes(messages):
+        print(line)
     print(f'{count(len(tickets), "ticket")}, {open_count} open.')
     remember(state)
 

@@ -73,6 +73,12 @@ to keep it on your machine. A template is in
 the register in your home folder. It prints at most 1 MB, and nothing when the register or its folder is a link. In a
 git worktree it also finds a register that is only in the main checkout.
 
+## A channel that is not only tickets
+
+A ticket is a top-level message that starts with `*Q:` and has an `Urgency:` or an `Asked by:` field, bold or not.
+Older tickets have a plain `Urgency:` line and no "Asked by", and still count. A message that only starts like a ticket
+is left out, and `--list` and `--answers` say how many there were.
+
 ## The script
 
 Claude runs it for you. By hand, with the two variables set (`--setup` needs neither):
