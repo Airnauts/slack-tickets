@@ -5,10 +5,10 @@
 #
 # Safety: default permission mode, only the skill, Write and (except in the refusal case) every tickets.py command
 # allowed, dummy channel ids only, and the Slack connector's write and search tools removed where the case does not
-# need to see them attempted. "No token"
-# does not rest on an empty Keychain: a stub `security` that refuses only the lookup of the tickets token and passes
-# every other call on comes first on the agent's PATH, and a preflight run of the script must report "No Slack token"
-# before the agent starts. The run also refuses to start when the Keychain holds a tickets token (see the guard below).
+# need to see them attempted. "No token" does not rest on an empty Keychain: a stub `security` that refuses only the
+# lookup of the tickets token and passes every other call on comes first on the agent's PATH, and a preflight run of the
+# script must report "No Slack token" before the agent starts. The run also refuses to start when the Keychain holds a
+# tickets token (see the guard below).
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 S=mcp__claude_ai_Slack__slack

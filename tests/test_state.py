@@ -47,6 +47,11 @@ class StateTestCase(TicketsTestCase):
         os.chdir(project)
         return project, outside
 
+    def put_in(self, folder, text):
+        os.makedirs(os.path.join(folder, '.slack-tickets'), exist_ok=True)
+        with open(self.state_file(folder), 'w', encoding='utf-8') as out:
+            out.write(text)
+
     def put(self, text):
         os.makedirs('.slack-tickets', exist_ok=True)
         with open(os.path.join('.slack-tickets', 'state.json'), 'w', encoding='utf-8') as out:
@@ -133,11 +138,6 @@ class WorktreeStateTests(StateTestCase):
         os.makedirs(self.repo)
         make_repo(self.repo)
         git('worktree', 'add', '-q', self.tree, cwd=self.repo)
-
-    def put_in(self, folder, text):
-        os.makedirs(os.path.join(folder, '.slack-tickets'), exist_ok=True)
-        with open(self.state_file(folder), 'w', encoding='utf-8') as out:
-            out.write(text)
 
     def make_main_read_only(self):
         os.chmod(self.repo, 0o555)
@@ -232,9 +232,7 @@ class TrackedStateTests(StateTestCase):
     FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}}
 
     def commit_state(self, folder, text):
-        os.makedirs(os.path.join(folder, '.slack-tickets'), exist_ok=True)
-        with open(self.state_file(folder), 'w', encoding='utf-8') as out:
-            out.write(text)
+        self.put_in(folder, text)
         git('add', '-f', os.path.join('.slack-tickets', 'state.json'), cwd=folder)
         commit('plant', folder)
 

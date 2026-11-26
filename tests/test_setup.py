@@ -124,21 +124,11 @@ class SkillFileTests(unittest.TestCase):
     def test_only_the_reading_commands_are_pre_approved(self):
         text = read(SKILL, 'SKILL.md')
         head, body = text.split('\n---\n', 1)
-        rules = []
-        listing = False
-        for line in head.splitlines():
-            if line.startswith('allowed-tools:'):
-                listing = True
-            elif listing and line.startswith('  - '):
-                rules.append(line[len('  - '):].strip())
-            elif listing:
-                break
+        rules = re.findall(r'^  - (.*)$', head, re.M)  # allowed-tools is the frontmatter's only list
         prefix = 'Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py '
-        self.assertTrue(rules)
-        self.assertFalse([rule for rule in rules if '*' in rule])
-        self.assertTrue(all(rule.startswith(prefix) and rule.endswith(')') for rule in rules))
-        self.assertEqual({rule[len(prefix):-1] for rule in rules},
-                         {'--list', '--answers', '--answers --all', '--answers --peek', '--check', '--setup', '--sources-template'})
+        commands = ['--list', '--answers', '--answers --all', '--answers --peek', '--check', '--setup',
+                    '--sources-template']
+        self.assertEqual(sorted(rules), sorted(f'{prefix}{command})' for command in commands))
         loaded = re.search(r'^' + re.escape(chr(33) + chr(96)) + r'(.*)' + chr(96) + r'$', body, re.M)
         self.assertIsNotNone(loaded)
         self.assertIn(f'Bash({loaded.group(1)})', rules)

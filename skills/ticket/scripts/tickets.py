@@ -191,7 +191,7 @@ def believable(last):
 
 def read_state(path):
     """The believable part of one state file. Raises on a file that is oddly shaped or unreadable."""
-    state = {} if linked(path) or tracked(path) else load(path)
+    state = {} if linked(path) or not os.path.lexists(path) or tracked(path) else load(path)
     seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
     names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
     return seen, names
@@ -212,8 +212,7 @@ def recall():
         except Exception:  # one bad file must not hide the other
             continue
         for ts, last in more_seen.items():
-            if ts not in seen or float(last) > float(seen[ts]):
-                seen[ts] = last
+            seen[ts] = max(seen.get(ts, last), last, key=float)
         for user, name in more_names.items():
             names.setdefault(user, name)
     return {'names': names, 'seen': seen}
@@ -239,17 +238,17 @@ def write_state(path, state):
 def remember(state):
     """Saves what was shown. A folder that cannot be written costs a repeat next time, not the answers just printed."""
     paths = state_paths()
-    first_error = None
+    errors = []
     for path in paths:
         try:
             write_state(path, state)
         except OSError as error:
-            first_error = first_error or error
+            errors.append(error)
             continue
-        if path != paths[0]:
+        if errors:
             print(f'Remembered in this checkout only ({path}): the main checkout cannot be written from here.')
         return
-    print(f'What was shown could not be remembered ({paths[0]}: {first_error.strerror}). The same replies will show as new next time.')
+    print(f'What was shown could not be remembered ({paths[0]}: {errors[0].strerror}). The same replies will show as new next time.')
 
 
 def problems(tickets):
