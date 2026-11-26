@@ -12,6 +12,7 @@
   tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
   tickets.py --check               says which channel and whose token (never prints the token)
   tickets.py --setup               prints the setup steps and the Slack app manifest (needs nothing, calls nobody)
+  tickets.py --sources-template    prints the template for the register of client documents
   tickets.py ... --channel=<id>    with any command: the channel for this run, when the project has none set
 
 Configuration, two environment variables (in Claude Code: the project's .claude/settings.local.json, key "env"):
@@ -75,19 +76,24 @@ def token():
     return value
 
 
+def show_file(title, name):
+    """Prints one file of the skill's folder between a header and an end line. Never raises: a missing file is said."""
+    try:
+        with open(os.path.join(SKILL_DIR, name), encoding='utf-8') as source:
+            text = source.read().strip()
+    except Exception as error:  # missing, unreadable or not UTF-8
+        text = f"(Missing from the skill's folder: {name} ({type(error).__name__}).)"
+    try:
+        print(f'===== {title}: {name} =====\n{text}\n===== End of {name} =====\n')
+    except Exception:  # a terminal that cannot show a character; the files are ASCII, so only a damaged copy
+        pass
+
+
 def setup():
     """The setup steps and the Slack app manifest, from the skill's own folder, for an agent to lead someone through.
-    Reads no token, checks no channel, calls nobody, and never raises: a missing file is said, not an error."""
+    Reads no token, checks no channel, calls nobody."""
     for title, name in SETUP_FILES:
-        try:
-            with open(os.path.join(SKILL_DIR, name), encoding='utf-8') as source:
-                text = source.read().strip()
-        except Exception as error:  # missing, unreadable or not UTF-8
-            text = f"(Missing from the skill's folder: {name} ({type(error).__name__}).)"
-        try:
-            print(f'===== {title}: {name} =====\n{text}\n===== End of {name} =====\n')
-        except Exception:  # a terminal that cannot show a character; both files are ASCII, so only a damaged copy
-            pass
+        show_file(title, name)
 
 
 def call(method, tok, read=False, **payload):
@@ -136,22 +142,43 @@ def load(path):
         return {}
 
 
-def state_path():
-    """Where --answers remembers what it showed: .slack-tickets/state.json in the project the script is run from.
-    In a git worktree that is the main checkout, so every worktree shares one file."""
+def state_paths():
+    """Where the state may be kept: .slack-tickets/state.json in the main checkout, which every git worktree shares,
+    then the same file in the checkout the script is run from, for a sandbox that may not write outside it."""
     try:
-        found = subprocess.run(['git', 'rev-parse', '--git-common-dir'], capture_output=True, text=True)
-        common = os.path.abspath(found.stdout.strip()) if found.returncode == 0 and found.stdout.strip() else ''
-    except OSError:  # no git on this machine
-        common = ''
-    # Only a plain .git folder names the project; a submodule or a bare repository does not.
-    root = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else os.getcwd()
-    return os.path.join(root, '.slack-tickets', 'state.json')
+        found = subprocess.run(['git', 'rev-parse', '--git-common-dir', '--show-toplevel'], capture_output=True, text=True, timeout=10)
+        lines = found.stdout.split('\n') if found.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired):  # no git on this machine, or it hangs
+        lines = []
+    common = os.path.abspath(lines[0]) if lines and lines[0] else ''
+    own = os.path.abspath(lines[1]) if len(lines) > 1 and lines[1] else os.getcwd()
+    # Only a plain .git folder names the project; a submodule or a separate git dir is its own project.
+    main = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else own
+    roots = [main] if os.path.realpath(own) == os.path.realpath(main) else [main, own]
+    return [os.path.join(root, '.slack-tickets', 'state.json') for root in roots]
+
+
+def state_path():
+    """The shared file: the first of state_paths()."""
+    return state_paths()[0]
 
 
 def linked(path):
     """True when the state file or its folder is a link, which could send a read or a write outside the project."""
     return os.path.islink(path) or os.path.islink(os.path.dirname(path))
+
+
+def git_exit(folder, *args):
+    """The exit code of one git command run in folder, or None when git is not there, hangs or the folder is not usable."""
+    try:
+        return subprocess.run(['git', '-C', folder, *args], capture_output=True, text=True, timeout=10).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def tracked(path):
+    """True when git tracks the state file: a file that arrives with a branch, never the script's own."""
+    return git_exit(os.path.dirname(os.path.dirname(path)), 'ls-files', '--error-unmatch', '--', '.slack-tickets/state.json') == 0
 
 
 def believable(last):
@@ -162,35 +189,71 @@ def believable(last):
         return False
 
 
+def read_state(path):
+    """The believable part of one state file. Raises on a file that is oddly shaped or unreadable."""
+    state = {} if linked(path) or not os.path.lexists(path) or tracked(path) else load(path)
+    seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
+    names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
+    return seen, names
+
+
 def recall():
-    """What --answers remembered, read as something a stranger could have put in the project.
-    A missing, unreadable, linked or oddly shaped file counts as nothing remembered. Never raises."""
+    """What --answers remembered, read as something a stranger could have put in the project, from every place
+    state_paths() names: the later timestamp per reply wins, the first name per user stays.
+    A missing, unreadable, linked, tracked or oddly shaped file counts as nothing remembered. Never raises."""
+    seen, names = {}, {}
     try:
-        path = state_path()
-        state = {} if linked(path) else load(path)
-        seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
-        names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
-    except Exception:  # whatever the file holds, --list must still load with the skill
-        seen, names = {}, {}
+        paths = state_paths()
+    except Exception:  # whatever the surroundings are, --list must still load with the skill
+        paths = []
+    for path in paths:
+        try:
+            more_seen, more_names = read_state(path)
+        except Exception:  # one bad file must not hide the other
+            continue
+        for ts, last in more_seen.items():
+            seen[ts] = max(seen.get(ts, last), last, key=float)
+        for user, name in more_names.items():
+            names.setdefault(user, name)
     return {'names': names, 'seen': seen}
+
+
+def write_state(path, state):
+    folder = os.path.dirname(path)
+    if linked(path):
+        raise OSError(0, 'a link stands in its place')
+    if tracked(path):
+        raise OSError(0, 'git tracks it')
+    os.makedirs(folder, exist_ok=True)
+    try:  # before the state, so the state is never in the project without it; 'x' does not follow a link
+        with open(os.path.join(folder, '.gitignore'), 'x', encoding='utf-8') as out:
+            out.write('*\n')
+    except FileExistsError:
+        pass
+    if git_exit(os.path.dirname(folder), 'check-ignore', '-q', '--', '.slack-tickets/state.json') == 1:
+        raise OSError(0, 'git would not ignore it')
+    save(path, state)
 
 
 def remember(state):
     """Saves what was shown. A folder that cannot be written costs a repeat next time, not the answers just printed."""
-    path = state_path()
-    folder = os.path.dirname(path)
     try:
-        if linked(path):
-            raise OSError(0, 'a link stands in its place')
-        os.makedirs(folder, exist_ok=True)
-        try:  # before the state, so the state is never in the project without it; 'x' does not follow a link
-            with open(os.path.join(folder, '.gitignore'), 'x', encoding='utf-8') as out:
-                out.write('*\n')
-        except FileExistsError:
-            pass
-        save(path, state)
-    except OSError as error:
-        print(f'What was shown could not be remembered ({path}: {error.strerror}). The same replies will show as new next time.')
+        paths = state_paths()
+    except OSError as error:  # the current folder may be gone
+        print(f'What was shown could not be remembered ({error.strerror}). The same replies will show as new next time.')
+        return
+    failed = []
+    for path in paths:
+        try:
+            write_state(path, state)
+        except OSError as error:
+            failed.append((path, error.strerror))
+            continue
+        if failed:
+            print(f'Remembered in this checkout only ({path}). The shared file could not be used ({failed[0][0]}: {failed[0][1]}).')
+        return
+    tried = '; '.join(f'{path}: {reason}' for path, reason in failed)
+    print(f'What was shown could not be remembered ({tried}). The same replies will show as new next time.')
 
 
 def problems(tickets):
@@ -377,6 +440,8 @@ def main():
     flags = {a for a in sys.argv[1:] if a.startswith('--')}
     if '--setup' in flags:
         setup()
+    elif '--sources-template' in flags:
+        show_file('The register template', 'assets/sources-template.md')
     elif '--check' in flags:
         print(f'Channel {channel_id()}.')
         who = call('auth.test', token())

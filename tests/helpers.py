@@ -54,6 +54,11 @@ def clean_git_environment(ceiling):
     os.environ['GIT_CEILING_DIRECTORIES'] = ceiling
     os.environ['GIT_CONFIG_GLOBAL'] = os.devnull
     os.environ['GIT_CONFIG_NOSYSTEM'] = '1'
+    # GIT_CONFIG_GLOBAL does not turn off git's default global ignore file, so name an empty one.
+    os.environ['XDG_CONFIG_HOME'] = os.path.join(ceiling, 'xdg-config')
+    os.environ['GIT_CONFIG_COUNT'] = '1'
+    os.environ['GIT_CONFIG_KEY_0'] = 'core.excludesFile'
+    os.environ['GIT_CONFIG_VALUE_0'] = os.devnull
 
 
 def run_cli(args, channel=None):
