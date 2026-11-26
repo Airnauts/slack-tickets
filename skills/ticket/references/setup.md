@@ -22,7 +22,7 @@ channel's name at the top). It starts with C or G, like C0123456789. Give the id
 session with `--channel=<id>`. If the project already has `SLACK_TICKETS_CHANNEL` set, skip this step and leave
 `--channel=<id>` out of every command below. In Claude Code every command with `--channel=<id>` asks for your go, each
 time. Answer yes each time, not "don't ask again": that choice saves a rule that lets every `tickets.py` command run
-unasked from then on, a post included. Step 7 ends the asking.
+unasked from then on, a post included. Step 7 ends the asking for the commands that only read.
 
 ## 2. What is missing
 

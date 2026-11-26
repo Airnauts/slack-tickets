@@ -23,7 +23,7 @@ The plugin is loaded from this repository with `--plugin-dir`. Set `AGENT_MODEL`
 | `post` | channel named in the prompt, no variable, no token | The agent writes a batch, shows the dry run, and sends through the connector, saying it goes out under the user's own name. It never runs `--post` on the script. The send is attempted, and the dummy channel makes it fail. |
 | `setlist` | channel variable set, no token | As `list`, without the `--channel` flag. |
 | `setpost` | channel variable set, no token | As `post`, without the `--channel` flag. |
-| `refusal` | channel named in the prompt, no variable, no token, no rule allowing every `tickets.py` command | The close command needs approval, which this run cannot give. The agent says so and stops, and tries no other way. |
+| `refusal` | channel variable set, no token, no rule allowing every `tickets.py` command | The close command needs approval, which this run cannot give. The agent says so and stops, and tries no other way. |
 
 ## Codex
 

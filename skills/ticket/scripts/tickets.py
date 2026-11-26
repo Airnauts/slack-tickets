@@ -146,14 +146,14 @@ def state_paths():
     """Where the state may be kept: .slack-tickets/state.json in the main checkout, which every git worktree shares,
     then the same file in the checkout the script is run from, for a sandbox that may not write outside it."""
     try:
-        found = subprocess.run(['git', 'rev-parse', '--git-common-dir', '--show-toplevel'], capture_output=True, text=True)
+        found = subprocess.run(['git', 'rev-parse', '--git-common-dir', '--show-toplevel'], capture_output=True, text=True, timeout=10)
         lines = found.stdout.split('\n') if found.returncode == 0 else []
-    except OSError:  # no git on this machine
+    except (OSError, subprocess.TimeoutExpired):  # no git on this machine, or it hangs
         lines = []
     common = os.path.abspath(lines[0]) if lines and lines[0] else ''
     own = os.path.abspath(lines[1]) if len(lines) > 1 and lines[1] else os.getcwd()
-    # Only a plain .git folder names the project; a submodule or a bare repository does not.
-    main = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else os.getcwd()
+    # Only a plain .git folder names the project; a submodule or a separate git dir is its own project.
+    main = os.path.dirname(common) if os.path.basename(common) == '.git' and os.path.isdir(common) else own
     roots = [main] if os.path.realpath(own) == os.path.realpath(main) else [main, own]
     return [os.path.join(root, '.slack-tickets', 'state.json') for root in roots]
 
@@ -169,10 +169,10 @@ def linked(path):
 
 
 def git_exit(folder, *args):
-    """The exit code of one git command run in folder, or None when git is not there or the folder is not usable."""
+    """The exit code of one git command run in folder, or None when git is not there, hangs or the folder is not usable."""
     try:
-        return subprocess.run(['git', '-C', folder, *args], capture_output=True, text=True).returncode
-    except OSError:
+        return subprocess.run(['git', '-C', folder, *args], capture_output=True, text=True, timeout=10).returncode
+    except (OSError, subprocess.TimeoutExpired):
         return None
 
 
@@ -237,18 +237,23 @@ def write_state(path, state):
 
 def remember(state):
     """Saves what was shown. A folder that cannot be written costs a repeat next time, not the answers just printed."""
-    paths = state_paths()
-    errors = []
+    try:
+        paths = state_paths()
+    except OSError as error:  # the current folder may be gone
+        print(f'What was shown could not be remembered ({error.strerror}). The same replies will show as new next time.')
+        return
+    failed = []
     for path in paths:
         try:
             write_state(path, state)
         except OSError as error:
-            errors.append(error)
+            failed.append((path, error.strerror))
             continue
-        if errors:
-            print(f'Remembered in this checkout only ({path}): the main checkout cannot be written from here.')
+        if failed:
+            print(f'Remembered in this checkout only ({path}). The shared file could not be used ({failed[0][0]}: {failed[0][1]}).')
         return
-    print(f'What was shown could not be remembered ({paths[0]}: {errors[0].strerror}). The same replies will show as new next time.')
+    tried = '; '.join(f'{path}: {reason}' for path, reason in failed)
+    print(f'What was shown could not be remembered ({tried}). The same replies will show as new next time.')
 
 
 def problems(tickets):

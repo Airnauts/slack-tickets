@@ -93,6 +93,14 @@ class StatePathInRepositoryTests(StateTestCase):
         with mock.patch.dict(os.environ, {'PATH': os.path.join(self.tmp, 'nothing-here')}):
             self.assert_path(self.tickets.state_path(), self.state_file(deep))
 
+    def test_a_separate_git_dir_keeps_the_state_at_the_top_folder_from_any_subfolder(self):
+        project, elsewhere = os.path.join(self.tmp, 'project'), os.path.join(self.tmp, 'elsewhere')
+        os.makedirs(os.path.join(project, 'src'))
+        git('init', '-q', '--separate-git-dir', elsewhere, project, cwd=self.tmp)
+        os.chdir(os.path.join(project, 'src'))
+        self.assertEqual([os.path.realpath(p) for p in self.tickets.state_paths()],
+                         [os.path.realpath(self.state_file(project))])
+
     def test_nothing_remembered_yet(self):
         os.chdir(self.repo)
         self.assertEqual(self.tickets.recall(), EMPTY)
@@ -157,6 +165,7 @@ class WorktreeStateTests(StateTestCase):
         os.chdir(self.tree)
         out = self.remember_quietly({'seen': {'1.000001': '2.000002'}, 'names': {'U1': 'Ann'}})
         self.assertIn('Remembered in this checkout only', out)
+        self.assertIn('The shared file could not be used', out)
         self.assertNotIn('could not be remembered', out)
         self.assertEqual(sorted(os.listdir(os.path.join(self.tree, '.slack-tickets'))), ['.gitignore', 'state.json'])
         status = subprocess.run(['git', 'status', '--porcelain'], cwd=self.tree, capture_output=True, text=True)
@@ -164,6 +173,18 @@ class WorktreeStateTests(StateTestCase):
         self.assertEqual(self.tickets.recall()['seen'], {'1.000001': '2.000002'})
         os.chdir(self.repo)
         self.assertEqual(self.tickets.recall(), EMPTY)
+
+    @needs_links
+    @needs_permissions
+    def test_when_both_places_fail_both_are_named_with_their_reasons(self):
+        self.make_main_read_only()
+        os.makedirs(os.path.join(self.tree, '.slack-tickets'))
+        os.symlink(self.write('victim.txt', 'keep me'), self.state_file(self.tree))
+        os.chdir(self.tree)
+        out = self.remember_quietly({'seen': {}, 'names': {}})
+        self.assertIn('could not be remembered', out)
+        self.assertIn(f'{self.state_file(self.repo)}: Permission denied', out)
+        self.assertIn(f'{self.state_file(self.tree)}: a link stands in its place', out)
 
     def test_the_later_reply_wins_whichever_place_holds_it(self):
         os.chdir(self.tree)
@@ -217,7 +238,8 @@ class InheritedGitVariablesTests(StateTestCase):
         os.environ['GIT_WORK_TREE'] = repo
         clean_git_environment(self.git_ceiling)
         self.assertEqual(sorted(n for n in os.environ if n.startswith('GIT_')),
-                         ['GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'])
+                         ['GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_KEY_0',
+                          'GIT_CONFIG_NOSYSTEM', 'GIT_CONFIG_VALUE_0'])
         os.chdir(plain)
         self.assert_path(self.tickets.state_path(), self.state_file(plain))
         self.tickets.remember({'seen': {'1.000001': '2.000002'}, 'names': {}})
@@ -263,6 +285,19 @@ class TrackedStateTests(StateTestCase):
         self.assertEqual(self.remember_quietly(self.FRESH), '')
         self.assertEqual(self.read(repo), self.FRESH)
         self.assertEqual(self.read(tree), self.PLANTED)
+
+    def test_a_tracked_file_in_the_main_checkout_sends_the_state_to_the_worktree(self):
+        repo, tree = os.path.join(self.tmp, 'repo'), os.path.join(self.tmp, 'tree')
+        os.makedirs(repo)
+        make_repo(repo)
+        git('worktree', 'add', '-q', '-b', 'other', tree, cwd=repo)
+        self.commit_state(repo, json.dumps(self.PLANTED))
+        os.chdir(tree)
+        out = self.remember_quietly(self.FRESH)
+        self.assertIn('Remembered in this checkout only', out)
+        self.assertIn('git tracks it', out)
+        self.assertEqual(self.read(repo), self.PLANTED)
+        self.assertEqual(self.read(tree), self.FRESH)
 
     def test_an_ignore_file_that_does_not_ignore_the_state_gets_no_state_written(self):
         repo = os.path.join(self.tmp, 'repo')
@@ -370,6 +405,17 @@ class StateContentTests(StateTestCase):
         self.project('nested')
         self.put('[' * 200000)
         self.assertEqual(self.tickets.recall(), EMPTY)
+
+    def test_a_current_folder_that_is_gone_is_not_remembered_in_and_does_not_raise(self):
+        gone = os.path.join(self.tmp, 'gone')
+        os.makedirs(gone)
+        os.chdir(gone)
+        os.rmdir(gone)
+        try:
+            out = self.remember_quietly({'seen': {}, 'names': {}})
+        finally:
+            os.chdir(self.tmp)
+        self.assertIn('could not be remembered', out)
 
     def test_a_current_folder_that_is_gone_counts_as_nothing_remembered(self):
         gone = os.path.join(self.tmp, 'gone')

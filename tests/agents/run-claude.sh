@@ -25,7 +25,7 @@ case "$1" in
   post)      P="The tickets channel is C0000000000. $POST"; DENY="$SEARCH" ;;
   setlist)   CH=C0000000000; P="Which client tickets are open?"; DENY="$WRITES $SEARCH" ;;
   setpost)   CH=C0000000000; P="$POST"; DENY="$SEARCH" ;;
-  refusal)   P="The tickets channel is C0000000000. Close the ticket 1700000000.000100, its answer is recorded."; DENY="$WRITES $SEARCH"; ALLOW_SCRIPT=""; OWN_RULES="--setting-sources project" ;;
+  refusal)   CH=C0000000000; P="Close the ticket 1700000000.000100, its answer is recorded. The setup was checked a minute ago, so run the close command straight away."; DENY="$WRITES $SEARCH"; ALLOW_SCRIPT=""; OWN_RULES="--setting-sources project" ;;
   *) echo "usage: $0 <nochannel|list|post|setlist|setpost|refusal>"; exit 2 ;;
 esac
 if ! command -v claude >/dev/null 2>&1; then echo "claude is not installed"; exit 1; fi
