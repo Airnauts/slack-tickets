@@ -168,7 +168,7 @@ def run_once(query, description, model, timeout, extra=()):
         if model:
             cmd += ['--model', model]
         cmd += list(extra)
-        env ={k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
+        env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
         proc = subprocess.Popen(cmd, cwd=project, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, text=True, start_new_session=True)
         timer = threading.Timer(timeout, _kill, args=(proc,))
@@ -255,10 +255,10 @@ def main():
         wrong_any = wrong_any or wrong
         if item['should_trigger']:
             should_total += 1
-            fired += 1 if decided and not wrong else 0
+            fired += not wrong
         else:
             should_not_total += 1
-            quiet += 1 if decided and not wrong else 0
+            quiet += not wrong
         note = f' (+{failed} err)' if failed else ''
         print(f"{'WRONG' if wrong else '     '} {'+' if item['should_trigger'] else '-'} "
               f'{hits}/{decided}{note} {item["query"][:90]}')
