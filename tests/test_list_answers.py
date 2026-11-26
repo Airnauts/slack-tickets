@@ -18,6 +18,8 @@ T3 = '1700002000.000100'
 
 TOP = '*Q: {question}*\n*Urgency:* :red_circle: Blocking · *Asked by:* {by}\n*Context:* Why it matters.'
 CLOSED_BY_US = [{'name': 'white_check_mark', 'users': [BOT], 'count': 1}]
+STRANGERS = [{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]
+US = {'ok': True, 'user_id': BOT, 'bot_id': APP}
 OLD_TOP = '*Q: {question}*\nUrgency: 🔴 Blocking\nOur decision: We will ship.\nContext: Why it matters.'
 
 
@@ -114,8 +116,8 @@ class ListingTests(SlackTestCase):
         self.assertNotIn('Is this closed?', '\n'.join(lines))
 
     def test_a_check_mark_from_someone_else_leaves_a_ticket_open(self):
-        self.history(ticket(T1, reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]))
-        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        self.history(ticket(T1, reactions=STRANGERS))
+        self.slack.respond('auth.test', US)
         lines = self.listed()
         self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
         self.assertIn('Can we ship on Friday?', lines[1])
@@ -127,14 +129,14 @@ class ListingTests(SlackTestCase):
         self.assertEqual(self.slack.methods(), ['conversations.history'])
 
     def test_our_check_mark_on_tickets_without_a_user_is_looked_up_once(self):
-        self.history(ticket(T1, user=None, bot_id='B0000000001', reactions=CLOSED_BY_US),
-                     ticket(T2, user=None, bot_id='B0000000001', reactions=CLOSED_BY_US))
-        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        self.history(ticket(T1, user=None, bot_id=APP, reactions=CLOSED_BY_US),
+                     ticket(T2, user=None, bot_id=APP, reactions=CLOSED_BY_US))
+        self.slack.respond('auth.test', US)
         self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 0 open'))
         self.assertEqual(len(self.slack.made('auth.test')), 1)
 
     def test_a_failed_lookup_leaves_the_ticket_open_and_the_list_readable(self):
-        self.history(ticket(T1, reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]))
+        self.history(ticket(T1, reactions=STRANGERS))
 
         def refuse(**payload):
             raise SystemExit('auth.test: invalid_auth')
@@ -414,8 +416,8 @@ class AnswersTests(SlackTestCase):
     def test_all_marks_a_ticket_with_a_strangers_check_mark_open(self):
         self.history(
             ticket(T1, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest),
-            ticket(T2, top('Is the old one closed?', 'Kim'), reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]))
-        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+            ticket(T2, top('Is the old one closed?', 'Kim'), reactions=STRANGERS))
+        self.slack.respond('auth.test', US)
         out = self.answers('--all')
         self.assertIn('[open] Q: Is the old one closed?', out)
         self.assertNotIn('[closed]', out)
@@ -738,8 +740,8 @@ class MainTests(SlackTestCase):
 
     def test_close_adds_ours_over_someone_elses_check_mark(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [
-            ticket(T1, reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}])]})
-        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+            ticket(T1, reactions=STRANGERS)]})
+        self.slack.respond('auth.test', US)
         self.slack.respond('reactions.add', {'ok': True})
         result = self.run_main('--close', T1)
         self.assertIsNone(result.code)

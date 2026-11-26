@@ -7,10 +7,10 @@ import re
 import unittest
 
 from helpers import CHANNEL, PLEASE, FakeChannel
-from test_list_answers import ANN, BEN, BOT, CLOSED_BY_US, OLD_TOP, T1, T2, T3, SlackTestCase, lines_of, said, ticket, top
+from test_list_answers import (ANN, APP, BEN, BOT, CLOSED_BY_US, OLD_TOP, STRANGERS, T1, T2, T3, US, SlackTestCase,
+                               lines_of, said, ticket, top)
 
 STATE = '.slack-tickets/state.json'
-STRANGERS = [{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]
 
 FIRST_REPLY = '1700000100.000100'
 CHAT = '1700000500.000100'
@@ -174,7 +174,7 @@ class BoundTests(SlackTestCase):
         self.patch(self.tickets.time, 'time', lambda: self.now)
         self.messages = []
         self.slack.respond('conversations.history', FakeChannel(self.messages))
-        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        self.slack.respond('auth.test', US)
         self.slack.respond('users.info', lambda user, **payload: {'ok': True, 'user': {'name': user}})
         self.slack.respond('conversations.replies', self.thread)
 
@@ -295,7 +295,7 @@ class BoundTests(SlackTestCase):
 
     def random_ticket(self, rng, ts):
         text = OLD_TOP.format(question=f'Question {ts}?') if rng.random() < 0.3 else top(f'Question {ts}?')
-        extra = {'user': None, 'bot_id': 'B0000000001'} if rng.random() < 0.2 else {}
+        extra = {'user': None, 'bot_id': APP} if rng.random() < 0.2 else {}
         replies = rng.choice(['none', 'details', 'answered'])
         if replies == 'details':
             extra.update(reply_count=1, reply_users=[BOT], latest_reply=ts[:-3] + '200')

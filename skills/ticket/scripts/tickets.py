@@ -548,15 +548,16 @@ def identity(tok):
 def closer(tok):
     """A test for a closed ticket: a check mark from its author or from this token, whose ids are asked for once and
     only when a check mark comes from someone else."""
-    me = []
+    me = None
 
     def is_closed(ticket):
+        nonlocal me
         users = {u for r in ticket.get('reactions') or [] if r.get('name') == CLOSED for u in r.get('users') or []}
         if not users or ticket.get('user') in users:
             return bool(users)
-        if not me:
-            me.append(identity(tok))
-        return bool(users & me[0])
+        if me is None:
+            me = identity(tok)
+        return bool(users & me)
     return is_closed
 
 
@@ -658,7 +659,7 @@ def answers(flags):
         if new_hints:
             print('  Not in its thread: posted in the channel after it, by others, and may be unrelated:')
             for m in new_hints:
-                text = ' '.join(plain(m.get('text'), look_up=False).split())
+                text = one_line(plain(m.get('text'), look_up=False))
                 print(f'    > {name(m.get("user"))}, {when(m["ts"])}: {cut(text, HINT_LENGTH)}')
         shown += 1
         if '--peek' not in flags and not show_all:
