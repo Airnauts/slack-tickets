@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Measures how often a headless Claude Code session reaches for the ticket skill, judging by its description alone.
+"""Measures how often a headless Claude Code session reaches for the ticket skill, judging by its name and description.
 
 For each prompt in trigger-evals.json it starts real sessions in a scratch project holding only a stub skill that
 carries the description, and watches for the first tool call. If that call picks the stub, the description worked.
-The session is killed right there, so no tool ever runs.
+The session is stopped at its first tool call. A call to another skill or a file read is recognised a moment later than
+other tools, so it may have started when the session is stopped.
 
 Every run is a real, paid session. It uses the caller's own Claude Code settings, with their connectors, and it is
 stopped at its first tool call. Do not run it casually.
@@ -19,6 +20,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -31,8 +33,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PROMPTS = os.path.join(HERE, 'trigger-evals.json')
 DEFAULT_SKILL = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'skills', 'ticket', 'SKILL.md')
 
-# Tools whose input can name the stub: the Skill tool, or a Read of the stub's command file.
-WATCHED_TOOLS = ('Skill', 'Read')
+# Tools whose input can name the stub: the Skill tool, or a Read of the stub's command file. Each maps to the input
+# key that holds the name.
+WATCHED_TOOLS = {'Skill': 'skill', 'Read': 'file_path'}
+
+# Sessions that are running now, and whether the run is being stopped.
+LIVE = set()
+LIVE_LOCK = threading.Lock()
+STOPPING = threading.Event()
+STARTED = 0
+
+# Texts of what failed sessions wrote to stderr, in the order they were found.
+ERROR_REASONS = []
 
 
 def read_description(path):
@@ -75,7 +87,7 @@ class Watcher:
     def __init__(self, stub):
         self.stub = stub
         self.result = None
-        self.collecting = False
+        self.key = None
         self.text = ''
 
     def feed(self, event):
@@ -94,8 +106,20 @@ class Watcher:
                     return self._whole_call(item)
             return None
         if kind == 'result':
+            # A session that failed (bad model, not logged in, rate limit) is an error, not a miss.
+            if event.get('is_error') or event.get('subtype', 'success') != 'success':
+                return None
             return False
         return None
+
+    def _value(self):
+        """(value so far, closed) of the collected call's key, or (None, False) while the key has not appeared."""
+        match = re.search(r'"' + self.key + r'"\s*:\s*"((?:[^"\\]|\\.)*)("?)', self.text)
+        return (match.group(1), bool(match.group(2))) if match else (None, False)
+
+    def _hit(self):
+        value = self._value()[0]
+        return value is not None and self.stub in value
 
     def _stream(self, inner):
         kind = inner.get('type')
@@ -104,20 +128,23 @@ class Watcher:
             if block.get('type') != 'tool_use':
                 return None
             if block.get('name') in WATCHED_TOOLS:
-                self.collecting = True
+                self.key = WATCHED_TOOLS[block['name']]
                 return None
             return False
-        if kind == 'content_block_delta' and self.collecting:
+        if kind == 'content_block_delta' and self.key:
             delta = inner.get('delta') or {}
             if delta.get('type') == 'input_json_delta':
                 self.text += delta.get('partial_json') or ''
-                if self.stub in self.text:
+                value, closed = self._value()
+                if value is not None and self.stub in value:
                     return True
+                if closed:
+                    return False
             return None
-        if kind == 'content_block_stop' and self.collecting:
-            return self.stub in self.text
+        if kind == 'content_block_stop' and self.key:
+            return self._hit()
         if kind == 'message_stop':
-            return self.stub in self.text if self.collecting else False
+            return self._hit() if self.key else False
         return None
 
     def _whole_call(self, item):
@@ -141,24 +168,40 @@ def decide(events, stub):
 
 
 def _kill(proc):
-    """Stops the session and anything it started."""
-    if proc.poll() is not None:
-        return
+    """Stops the session and anything it started, even when the session itself has already exited."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (OSError, AttributeError):
+        pass
+    if proc.poll() is None:
         try:
             proc.kill()
         except OSError:
             pass
 
 
+def error_reason(path):
+    """The last 300 characters of a stderr file on one line. Empty when there is no file or nothing in it."""
+    try:
+        with open(path, encoding='utf-8', errors='replace') as f:
+            return ' '.join(f.read().split())[-300:]
+    except OSError:
+        return ''
+
+
 def run_once(query, description, model, timeout, extra=()):
-    """One session in its own scratch project. True if it picked the stub, False if not, None on error."""
+    """One session in its own scratch project. True if it picked the stub, False if not, None on error.
+
+    When a session ends as an error, what it wrote to stderr is added to ERROR_REASONS."""
+    global STARTED
+    if STOPPING.is_set():
+        return None
     stub = f'ticket-check-{uuid.uuid4().hex[:8]}'
     project = tempfile.mkdtemp()
+    stderr_path = os.path.join(project, 'stderr.txt')
     proc = None
     timer = None
+    answer = None
     try:
         commands = os.path.join(project, '.claude', 'commands')
         os.makedirs(commands)
@@ -169,8 +212,14 @@ def run_once(query, description, model, timeout, extra=()):
             cmd += ['--model', model]
         cmd += list(extra)
         env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
-        proc = subprocess.Popen(cmd, cwd=project, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+        with open(stderr_path, 'wb') as stderr_file:
+            proc = subprocess.Popen(cmd, cwd=project, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=stderr_file, text=True, start_new_session=True)
+        with LIVE_LOCK:
+            LIVE.add(proc)
+            STARTED += 1
+        if STOPPING.is_set():
+            return None
         timer = threading.Timer(timeout, _kill, args=(proc,))
         timer.start()
         watcher = Watcher(stub)
@@ -196,7 +245,19 @@ def run_once(query, description, model, timeout, extra=()):
                 pass
             if proc.stdout is not None:
                 proc.stdout.close()
+            with LIVE_LOCK:
+                LIVE.discard(proc)
+        if answer is None and not STOPPING.is_set():
+            reason = error_reason(stderr_path)
+            if reason:
+                with LIVE_LOCK:
+                    ERROR_REASONS.append(reason)
         shutil.rmtree(project, ignore_errors=True)
+
+
+def _interrupt(signum, frame):
+    """SIGTERM handler: stop the run the way Ctrl-C does."""
+    raise KeyboardInterrupt
 
 
 def is_wrong(should_trigger, hits, decided):
@@ -208,8 +269,8 @@ def is_wrong(should_trigger, hits, decided):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Measure how often a session picks the ticket skill by its description. '
-                                                 'Every run is a real, paid Claude Code session.')
+    parser = argparse.ArgumentParser(description='Measure how often a session picks the ticket skill by its name and '
+                                                 'description. Every run is a real, paid Claude Code session.')
     parser.add_argument('--prompts', default=DEFAULT_PROMPTS, help='JSON list of {query, should_trigger}')
     parser.add_argument('--skill', default=DEFAULT_SKILL, help='SKILL.md whose description is scored')
     parser.add_argument('--description-file', help='score the text of this file instead of the skill description')
@@ -237,11 +298,26 @@ def main():
         sys.exit('The claude command is not on PATH.')
 
     results = [[] for _ in prompts]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=args.workers)
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    try:
         futures = [(i, pool.submit(run_once, item['query'], description, args.model, args.timeout, args.claude_arg))
                    for i, item in enumerate(prompts) for _ in range(args.runs)]
         for i, future in futures:
             results[i].append(future.result())
+        pool.shutdown()
+    except KeyboardInterrupt:
+        STOPPING.set()
+        pool.shutdown(wait=False, cancel_futures=True)
+        with LIVE_LOCK:
+            running = list(LIVE)
+            started = STARTED
+        for proc in running:
+            _kill(proc)
+        print(f'Stopped: {started} sessions were started, the rest were not.', file=sys.stderr)
+        sys.exit(130)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
     rows = []
     wrong_any = False
@@ -266,6 +342,8 @@ def main():
                      'decided': decided, 'errors': failed, 'runs': runs, 'wrong': wrong})
     print(f'description: {len(description)} chars, fired {fired}/{should_total} should-trigger, '
           f'quiet {quiet}/{should_not_total} should-not, errors {errors}/{len(prompts) * args.runs} runs')
+    if errors:
+        print(f'First error: {ERROR_REASONS[0] if ERROR_REASONS else "no output"}')
 
     if args.json:
         with open(args.json, 'w', encoding='utf-8') as f:

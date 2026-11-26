@@ -1,11 +1,14 @@
-"""The description eval runner's logic, and the shape of its prompt file. Nothing here starts claude or any process."""
+"""The description eval runner's logic, and the shape of its prompt file. Nothing here starts claude."""
 import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNNER = os.path.join(ROOT, 'tests', 'description', 'run.py')
@@ -159,6 +162,37 @@ class DecisionTests(unittest.TestCase):
     def test_a_result_with_no_tool_call_is_a_miss(self):
         self.assertIs(run.decide([text_start(), {'type': 'result', 'subtype': 'success'}], STUB), False)
 
+    def test_a_result_with_no_subtype_and_no_error_flag_is_a_miss(self):
+        self.assertIs(run.decide([text_start(), {'type': 'result'}], STUB), False)
+
+    def test_a_failed_run_is_not_a_miss(self):
+        self.assertIsNone(run.decide([{'type': 'result', 'subtype': 'success', 'is_error': True}], STUB))
+        self.assertIsNone(run.decide([{'type': 'result', 'subtype': 'error_during_execution'}], STUB))
+        self.assertIsNone(run.decide([{'type': 'result', 'is_error': True}], STUB))
+
+    def test_another_skill_is_a_miss_before_the_call_is_finished(self):
+        watcher = run.Watcher(STUB)
+        self.assertIsNone(watcher.feed(start('Skill')))
+        self.assertIsNone(watcher.feed(delta('{"skill": "other')))
+        self.assertIs(watcher.feed(delta('-skill", "args": "x')), False)
+
+    def test_a_read_of_another_file_is_a_miss_before_the_call_is_finished(self):
+        watcher = run.Watcher(STUB)
+        self.assertIsNone(watcher.feed(start('Read')))
+        self.assertIsNone(watcher.feed(delta('{"file_path": "/tmp/p/not')))
+        self.assertIs(watcher.feed(delta('es.md", "limit": 5')), False)
+
+    def test_the_stub_name_in_another_key_is_a_miss_in_both_paths(self):
+        events = [start('Skill'), delta('{"args": "' + STUB + '", "skill": "other"}'), stop()]
+        self.assertIs(run.decide(events, STUB), False)
+        events = [start('Skill'), delta('{"skill": "other", "args": "' + STUB + '"}'), stop()]
+        self.assertIs(run.decide(events, STUB), False)
+        self.assertIs(run.decide([assistant('Skill', skill='other', args=STUB)], STUB), False)
+
+    def test_a_key_named_inside_another_value_is_ignored(self):
+        inner = '{"args": "say \\"skill\\": \\"x\\"", "skill": "' + STUB + '"}'
+        self.assertIs(run.decide([start('Skill'), delta(inner), stop()], STUB), True)
+
     def test_an_empty_stream_has_no_decision(self):
         self.assertIsNone(run.decide([], STUB))
 
@@ -168,10 +202,85 @@ class DecisionTests(unittest.TestCase):
     def test_events_that_are_not_objects_are_ignored(self):
         self.assertIsNone(run.decide(['text', None, 3], STUB))
 
-    def test_a_decision_does_not_change_once_made(self):
+    def test_a_miss_does_not_change_once_made(self):
         watcher = run.Watcher(STUB)
         self.assertIs(watcher.feed(start('Bash')), False)
-        self.assertIs(watcher.feed({'type': 'result'}), False)
+        self.assertIs(watcher.feed(assistant('Skill', skill=STUB)), False)
+        self.assertIs(watcher.feed(start('Skill')), False)
+        self.assertIs(watcher.feed(delta('{"skill": "' + STUB + '"}')), False)
+
+    def test_a_hit_does_not_change_once_made(self):
+        watcher = run.Watcher(STUB)
+        self.assertIs(watcher.feed(assistant('Skill', skill=STUB)), True)
+        self.assertIs(watcher.feed(assistant('Bash', command='ls')), True)
+        self.assertIs(watcher.feed(start('Bash')), True)
+
+
+class StopTests(unittest.TestCase):
+    """The pieces that stop sessions. The only process started is a sleeping python."""
+
+    def sleeper(self):
+        return subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+
+    def test_kill_ends_a_running_session(self):
+        proc = self.sleeper()
+        self.addCleanup(proc.kill)
+        run._kill(proc)
+        proc.wait(timeout=10)
+        self.assertLess(proc.returncode, 0)
+
+    def test_kill_ends_what_a_run_started_even_after_it_exited(self):
+        code = ('import subprocess, sys; '
+                'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"]); '
+                'print(child.pid, flush=True)')
+        proc = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, text=True,
+                                start_new_session=True)
+        child = int(proc.stdout.readline())
+        proc.stdout.close()
+        proc.wait(timeout=10)
+        run._kill(proc)
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                os.kill(child, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        os.kill(child, 9)
+        self.fail('the grandchild was still running')
+
+    def test_kill_tolerates_a_process_that_is_already_gone(self):
+        proc = self.sleeper()
+        proc.kill()
+        proc.wait(timeout=10)
+        run._kill(proc)
+        run._kill(proc)
+
+    def test_a_run_that_is_stopping_starts_nothing(self):
+        run.STOPPING.set()
+        self.addCleanup(run.STOPPING.clear)
+        with mock.patch.object(run.subprocess, 'Popen', side_effect=AssertionError('started a process')), \
+                mock.patch.object(run.tempfile, 'mkdtemp', side_effect=AssertionError('made a project')):
+            self.assertIsNone(run.run_once('hello', 'desc', None, 5))
+
+
+class ErrorReasonTests(unittest.TestCase):
+    def reason(self, content):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'stderr.txt')
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return run.error_reason(path)
+
+    def test_the_text_is_stripped_and_kept_on_one_line(self):
+        self.assertEqual(self.reason('\n  Error: unknown model\n  try again \n\n'), 'Error: unknown model try again')
+
+    def test_only_the_last_300_characters_are_kept(self):
+        self.assertEqual(self.reason('a' * 100 + 'b' * 300), 'b' * 300)
+
+    def test_an_empty_or_missing_file_gives_nothing(self):
+        self.assertEqual(self.reason(' \n'), '')
+        self.assertEqual(run.error_reason(os.path.join(tempfile.gettempdir(), 'no-such-dir-xyz', 'stderr.txt')), '')
 
 
 class RateTests(unittest.TestCase):
