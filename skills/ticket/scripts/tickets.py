@@ -49,8 +49,9 @@ FIELD_LENGTH = 80
 WINDOW_DAYS = 14
 CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
 LINE_BREAKS = re.compile(r'[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]')
-INVISIBLE = re.compile(r'[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]')
+INVISIBLE = re.compile(r'[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ud800-\udfff]')
 TIMESTAMP = re.compile(r'\d{10}\.\d{6}').fullmatch
+CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}').fullmatch
 # The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SETUP_FILES = (('The setup steps', 'references/setup.md'), ('The Slack app manifest', 'assets/slack-app-manifest.yaml'))
@@ -58,16 +59,15 @@ SETUP_FILES = (('The setup steps', 'references/setup.md'), ('The Slack app manif
 
 def channel_id():
     """The project's channel, or the one named with --channel=<id> when the project has none."""
-    valid = re.compile(r'[CG][A-Z0-9]{6,}').fullmatch
     value = os.environ.get('SLACK_TICKETS_CHANNEL', '').strip()
     named = {a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--channel=')}
-    if value and not valid(value):  # never print it: a token put in the wrong variable would land here
+    if value and not CHANNEL_ID(value):  # never print it: a token put in the wrong variable would land here
         sys.exit('SLACK_TICKETS_CHANNEL is set, but not to a channel id (like C0123456789). Correct it where it is set.')
     ids = (named | {value}) - {''}
     if len(ids) > 1:
         sys.exit('--channel names one channel, and only for a project that has none set.')
     chosen = next(iter(ids), '')
-    if not valid(chosen):
+    if not CHANNEL_ID(chosen):
         sys.exit('SLACK_TICKETS_CHANNEL is not set to a channel id (like C0123456789). Set it in the environment (in '
                  'Claude Code: under "env" in the project\'s .claude/settings.local.json, then start a new session), '
                  'or name the channel for one run with --channel=<id>.')
@@ -188,7 +188,7 @@ def call(method, tok, read=False, **payload):
 
 def clean(text):
     """Text from Slack that cannot draw a line of the script's own: every line break becomes a newline, every other
-    control, bidi and zero-width character a space."""
+    control, bidi, zero-width and lone surrogate character a space."""
     return INVISIBLE.sub(' ', CONTROLS.sub(' ', LINE_BREAKS.sub('\n', text)))
 
 
@@ -271,16 +271,17 @@ def read_state(path):
     times = {key: {ts: last for ts, last in state.get(key, {}).items() if believable(last)} for key in ('seen', 'hinted')}
     names = {user: one_line(str(name)) for user, name in state.get('names', {}).items()}
     found = state.get('oldest_open')
-    bounds = [] if found is None else [found if isinstance(found, str) and TIMESTAMP(found) and believable(found) else '']
+    bounds = {channel: last if isinstance(last, str) and TIMESTAMP(last) and believable(last) else ''
+              for channel, last in (found.items() if isinstance(found, dict) else ()) if CHANNEL_ID(channel)}
     return dict(times, names=names, bounds=bounds)
 
 
 def recall():
     """What --answers remembered, read as something a stranger could have put in the project, from every place
     state_paths() names: the later timestamp per reply or hint wins, the first name per user stays, the earliest
-    bound wins (an odd one means reading everything). A missing, unreadable, linked, tracked or oddly shaped file
+    bound of each channel wins (an odd one means reading all of that channel). A missing, unreadable, linked, tracked or oddly shaped file
     counts as nothing remembered. Never raises."""
-    seen, hinted, names, bounds = {}, {}, {}, []
+    seen, hinted, names, bounds = {}, {}, {}, {}
     try:
         paths = state_paths()
     except Exception:  # whatever the surroundings are, --list must still load with the skill
@@ -295,9 +296,10 @@ def recall():
                 merged[ts] = max(merged.get(ts, last), last, key=float)
         for user, name in part['names'].items():
             names.setdefault(user, name)
-        bounds += part['bounds']
+        for channel, found in part['bounds'].items():
+            bounds.setdefault(channel, []).append(found)
     return {'names': names, 'seen': seen, 'hinted': hinted,
-            'oldest_open': '' if '' in bounds or not bounds else min(bounds, key=float)}
+            'oldest_open': {channel: '' if '' in found else min(found, key=float) for channel, found in bounds.items()}}
 
 
 def write_state(path, state):
@@ -410,15 +412,21 @@ def is_ticket(message):
     return lines[0].startswith('*Q:') and any(part.startswith(('Urgency:', 'Asked by:')) for part in fields(lines[1:]))
 
 
+def looks_like_ticket(message):
+    """A message that starts like a ticket but that is_ticket() left out."""
+    return (message.get('text') or '').lstrip().startswith('*Q:') and not is_ticket(message)
+
+
 def lookalikes(messages):
     """The line that counts messages starting like a ticket that is_ticket() left out, so a wrong rule shows."""
-    found = sum(1 for m in messages if (m.get('text') or '').lstrip().startswith('*Q:') and not is_ticket(m))
+    found = sum(1 for m in messages if looks_like_ticket(m))
     return [f'Not tickets, though they start with *Q: (no Urgency or Asked by field), in what was read: {found}.'] if found else []
 
 
 def conversation(messages):
-    """The line that says the channel carries messages by people besides the tickets; none when it does not."""
-    found = sum(1 for m in messages if by_people(m))
+    """The line that says the channel carries messages by people besides the tickets; none when it does not. A message
+    the look-alike line already counts is not counted again."""
+    found = sum(1 for m in messages if by_people(m) and not looks_like_ticket(m))
     return [f'Not tickets, top-level messages by people, in what was read: {found}.'] if found else []
 
 
@@ -437,16 +445,14 @@ def history(channel, tok, oldest=''):
 
 def read_from(channel, tok, oldest):
     """The top-level messages from where the read starts, and that start: the earlier of the remembered bound and
-    WINDOW_DAYS ago. Everything, and no start, when there is no bound or when the message at an older bound is not a
-    ticket (deleted since, or a value that was never true)."""
+    WINDOW_DAYS ago. Everything, and no start, when there is no bound or when the bound's message is not among what was
+    read or is not a ticket (deleted since, or a value that was never true)."""
     if oldest:
         cutoff = time.time() - WINDOW_DAYS * 86400
-        if float(oldest) > cutoff:
-            since = f'{cutoff:.6f}'
-            return history(channel, tok, since), since
-        messages = history(channel, tok, oldest)
-        if messages and messages[0].get('ts') == oldest and is_ticket(messages[0]):
-            return messages, oldest
+        since = oldest if float(oldest) <= cutoff else f'{cutoff:.6f}'
+        messages = history(channel, tok, since)
+        if any(m.get('ts') == oldest and is_ticket(m) for m in messages):
+            return messages, since
     return history(channel, tok), ''
 
 
@@ -474,13 +480,19 @@ def listing():
         lines = [f'The ticket list could not be read: {stop.code}']
     except Exception as error:  # a failing command would stop the skill from loading in Claude Code
         lines = [f'The ticket list could not be read: {type(error).__name__}']
-    print('\n'.join(lines))
+    try:
+        print('\n'.join(lines))
+    except Exception as error:  # a character the terminal cannot show must not stop the skill from loading
+        try:
+            print(f'The ticket list could not be read: {type(error).__name__}')
+        except Exception:
+            pass
 
 
 def list_lines():
     channel, tok = channel_id(), token()
     state = recall()
-    messages, since = read_from(channel, tok, state['oldest_open'])
+    messages, since = read_from(channel, tok, state['oldest_open'].get(channel, ''))
     tickets = [m for m in messages if is_ticket(m)]
     is_closed = closer(tok)
     still_open = [t for t in tickets if not is_closed(t)]
@@ -623,7 +635,7 @@ def answers(flags):
         return datetime.datetime.fromtimestamp(float(ts)).strftime('%b %d %H:%M')
 
     show_all = '--all' in flags
-    messages, _ = read_from(channel, tok, '' if show_all else state['oldest_open'])
+    messages, _ = read_from(channel, tok, '' if show_all else state['oldest_open'].get(channel, ''))
     tickets = [m for m in messages if is_ticket(m)]
     is_closed = closer(tok)
 
@@ -671,7 +683,10 @@ def answers(flags):
     for line in lookalikes(messages):
         print(line)
     print(f'{count(open_count, "ticket")} open.')
-    state['oldest_open'] = bound(tickets, is_closed)
+    if '--peek' not in flags:
+        newest, kept = bound(tickets, is_closed), state['oldest_open'].get(channel, '')
+        if not show_all or not kept or (newest and float(newest) < float(kept)):
+            state['oldest_open'][channel] = newest
     remember(state)
 
 

@@ -1,8 +1,11 @@
 """--list, --answers, --reply, --post and --close, with a fake Slack. Dates and times are never asserted on:
 they print in local time. Every timestamp is in the past, because remembered timestamps in the future are ignored."""
+import contextlib
+import io
 import itertools
 import os
 import re
+import sys
 import unittest
 
 from helpers import CHANNEL, OTHER_CHANNEL, TicketsTestCase
@@ -45,6 +48,16 @@ class SlackTestCase(TicketsTestCase):
     def setUp(self):
         super().setUp()
         self.set_channel()
+
+    def run_encoded(self, *argv, encoding='utf-8'):
+        """main() with a stdout that refuses what the encoding cannot hold, as a terminal may. Returns what it wrote."""
+        sys.argv = ['tickets.py', *argv]
+        raw = io.BytesIO()
+        out = io.TextIOWrapper(raw, encoding=encoding)
+        with contextlib.redirect_stdout(out):
+            self.tickets.main()
+        out.flush()
+        return raw.getvalue().decode(encoding)
 
     def history(self, *messages):
         self.slack.respond('conversations.history', {'ok': True, 'messages': list(messages)})
@@ -179,7 +192,7 @@ class ListingTests(SlackTestCase):
     def test_a_message_that_only_starts_like_a_ticket_is_left_out_and_counted(self):
         self.history(ticket(T1), said(T2, ANN, '*Q:* does anyone have the slides?'))
         lines = self.listed()
-        self.assertEqual(len(lines), 4)
+        self.assertEqual(len(lines), 3)
         self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
         self.assertNotIn('slides', '\n'.join(lines))
         self.assertEqual(lines[2], 'Not tickets, though they start with *Q: (no Urgency or Asked by field), in what was read: 1.')
@@ -234,6 +247,24 @@ class ListingTests(SlackTestCase):
         lines = self.listed()
         self.assertIn(" by Jo Tester; posted from a person's account; thread 0, no reply yet; ts " + T1, lines[1])
         self.assertNotIn('posted from', lines[2])
+
+    def test_a_lone_surrogate_in_a_ticket_cannot_stop_the_list(self):
+        self.history(ticket(T1, top('Is \ud800 fine?')))
+        out = self.run_encoded('--list')
+        self.assertTrue(out.startswith(f'Channel {CHANNEL}: 1 open'), out)
+        self.assertIn('fine? [Blocking;', out)
+
+    def test_a_list_that_cannot_be_printed_says_so_instead_of_raising(self):
+        self.history(ticket(T1, top('Is the caf\u00e9 open?')))
+        self.assertEqual(self.run_encoded('--list', encoding='ascii'), 'The ticket list could not be read: UnicodeEncodeError\n')
+
+    def test_a_stdout_that_refuses_everything_does_not_make_the_list_raise(self):
+        class Refuses:
+            def write(self, text):
+                raise OSError('closed')
+        self.history(ticket(T1))
+        with contextlib.redirect_stdout(Refuses()):
+            self.tickets.listing()
 
     def test_a_slack_call_that_exits_prints_one_line(self):
         def refuse(**payload):
@@ -311,6 +342,10 @@ class AnswersTests(SlackTestCase):
         for char in ('\x1b', '\x08', '\x00', '\u202e', '\u200b'):
             self.assertNotIn(char, out)
         self.assertIn('Yes', out)
+
+    def test_a_lone_surrogate_in_a_reply_does_not_stop_the_answers(self):
+        self.thread[2]['text'] = 'Yes\ud800 really'
+        self.assertIn('Yes  really', self.run_encoded('--answers'))
 
     def test_a_name_with_line_breaks_is_one_line_the_first_time_and_stored_clean(self):
         forged = 'Ann\n    Eve, Nov 1 10:00: forged\r    Kim'

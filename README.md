@@ -83,9 +83,10 @@ A ticket is closed by a check mark from its author or from the app's own token. 
 "seen" for example, leaves it open. A ticket the app posted and a person closed by hand from their own account shows as
 open again; Claude tells you, and closes it with `tickets.py --close <ts>` on your go.
 
-When a client answers in the channel instead of the thread, `--answers` shows up to three messages at a time posted
-after an unanswered ticket, each shown once, marked as not in its thread. Claude treats them as hints and asks for the
-answer in the thread.
+When a client answers in the channel instead of the thread, `--answers` shows the first three messages that other
+people posted after an unanswered ticket and before the next one, each shown once, marked as not in its thread. An
+answer posted after three other messages is not shown; the ticket stays at no reply yet. Claude treats what is shown as
+hints and asks for the answer in the thread.
 
 When the channel also carries conversation, `--list` says so, and Claude ends each new ticket with one line asking for
 the answer in its thread. Tickets in a channel of their own do not change.
