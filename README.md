@@ -75,7 +75,7 @@ to keep it on your machine. A template is in
 
 ## The script
 
-Claude runs it for you. By hand, with the two variables set:
+Claude runs it for you. By hand, with the two variables set (`--setup` needs neither):
 
 ```
 python3 skills/ticket/scripts/tickets.py --check               which channel, whose token

@@ -84,9 +84,11 @@ memory.
 - **The token.** The user gets it and stores it, in their own terminal, with the command the steps give. If they
   paste a token into the chat anyway, do not repeat it, use it or store it. Tell them the chat now holds it, so it
   has to be replaced as the steps' part "Replace a token" says, and wait until a new one is stored.
-- **The end.** The setup is done when both commands of the step "Check" pass, in this session. When one fails, say
-  what the message means and go back to the step the steps name for it. Then offer the optional last step, which
-  the user does by editing the file themselves, and say that a new session picks it up.
+- **The end.** The setup is done when both commands of the step "Check" pass. With the token in the Keychain that is in
+  this session. Where the token only arrives with a new session, say so, and that asking to set the tickets up again
+  there finishes it. When one fails, say what the message means and go back to the step the steps name for it. Then
+  offer the optional last step, which the user does by editing the file themselves, and say that a new session picks it
+  up.
 - **Another agent** than Claude Code follows the steps' "Other agents" part instead of the settings file.
 
 ## Without a token: the Slack connector

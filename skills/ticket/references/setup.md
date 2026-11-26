@@ -27,7 +27,8 @@ session with `--channel=<id>`. If the project already has `SLACK_TICKETS_CHANNEL
 Run `tickets.py --check --channel=<id>`.
 
 - `No Slack token`: go on with step 3.
-- `Posting as ... (a bot)`: the token is in place. Go to step 6.
+- `Posting as ... (a bot)`: the token is in place. Go to step 5 if the app has not been invited to this channel yet,
+  otherwise to step 6.
 - Anything else: see "If a check fails" below.
 
 ## 3. The Slack app
@@ -56,10 +57,13 @@ security add-generic-password -U -s slack-tickets -a slack -w
 It asks for the token without showing it. Paste it and press Enter. `-U` replaces a token stored before. The script
 finds it there in every project and every session, with nothing else to set.
 
-Not on a Mac: in Claude Code, the token goes into `.claude/settings.local.json`. First make sure git will not pick
-that file up: ask the agent to run `git check-ignore .claude/settings.local.json`, which prints the name when git
-ignores it. If it prints nothing, add the file to `.gitignore` before anything else. Then put the token in the file
-yourself (step 7 shows the file) and start a new session. With another agent, see "Other agents" below.
+Not on a Mac: in Claude Code, the token goes into `.claude/settings.local.json`. First make sure git will not pick that
+file up: ask the agent to run `git check-ignore .claude/settings.local.json`, which prints the name when git ignores it.
+If it prints nothing, add the file to `.gitignore` before anything else. If `git ls-files .claude/settings.local.json`
+prints the name, the file is already in git: stop and take it out of git first. Then put the token in the file yourself
+(step 7 shows the file) and start a new session. The setup cannot finish in the old session: in the new one, ask to set
+up the tickets again and give the channel id again, and the check (step 6) runs there. With another agent, see "Other
+agents" below.
 
 ## 5. Invite the app
 
@@ -75,6 +79,8 @@ The first ends with "(a bot)". The second starts with `Channel <id>:`. Then the 
 ## If a check fails
 
 - `No Slack token`: the token is not stored, or not under `slack-tickets`. Step 4.
+- `SLACK_TICKETS_CHANNEL is not set to a channel id`: the id was left out or is not an id. It starts with a capital C
+  or G and has no `#`. Step 1.
 - `auth.test: invalid_auth`: the token is wrong or cut short. Copy it again (step 3) and store it again (step 4).
 - `auth.test: token_revoked` or `account_inactive`: the app was removed or its token replaced. Get the current token
   (step 3) and store it (step 4).
