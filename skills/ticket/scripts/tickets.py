@@ -11,6 +11,7 @@
   tickets.py --reply <ts> note.txt --post  posts it
   tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
   tickets.py --check               says which channel and whose token (never prints the token)
+  tickets.py --setup               prints the setup steps and the Slack app manifest (needs nothing, calls nobody)
   tickets.py ... --channel=<id>    with any command: the channel for this run, when the project has none set
 
 Configuration, two environment variables (in Claude Code: the project's .claude/settings.local.json, key "env"):
@@ -38,6 +39,9 @@ import urllib.request
 
 KEYCHAIN = 'slack-tickets'
 CLOSED = 'white_check_mark'
+# The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
+SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+SETUP_FILES = (('The setup steps', 'references/setup.md'), ('The Slack app manifest', 'assets/slack-app-manifest.yaml'))
 
 
 def channel_id():
@@ -67,8 +71,23 @@ def token():
         except FileNotFoundError:  # no Keychain outside macOS
             pass
     if not value:
-        sys.exit('No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain under "slack-tickets". See the README.')
+        sys.exit('No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain under "slack-tickets". tickets.py --setup prints the steps.')
     return value
+
+
+def setup():
+    """The setup steps and the Slack app manifest, from the skill's own folder, for an agent to lead someone through.
+    Reads no token, checks no channel, calls nobody, and never raises: a missing file is said, not an error."""
+    for title, name in SETUP_FILES:
+        try:
+            with open(os.path.join(SKILL_DIR, name), encoding='utf-8') as source:
+                text = source.read().strip()
+        except Exception as error:  # missing, unreadable or not UTF-8
+            text = f"(Missing from the skill's folder: {name} ({type(error).__name__}).)"
+        try:
+            print(f'===== {title}: {name} =====\n{text}\n===== End of {name} =====\n')
+        except Exception:  # a terminal that cannot show a character; both files are ASCII, so only a damaged copy
+            pass
 
 
 def call(method, tok, read=False, **payload):
@@ -356,7 +375,9 @@ def answers(flags):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     flags = {a for a in sys.argv[1:] if a.startswith('--')}
-    if '--check' in flags:
+    if '--setup' in flags:
+        setup()
+    elif '--check' in flags:
         print(f'Channel {channel_id()}.')
         who = call('auth.test', token())
         print(f'Posting as {who.get("user")} in {who.get("team")}' + (' (a bot)' if who.get('bot_id') else ' (a person)'))

@@ -1,6 +1,6 @@
 ---
 name: ticket
-description: "Ask a client a question through the project's Slack tickets channel: one message per question with nobody tagged, an urgency, our own decision and a plain-language context, details in the thread. Posts a reviewed batch and checks for replies with a script. Use when the user says 'ticket', 'ask the client', 'post it to the tickets channel', 'what is still unanswered', 'check the tickets', 'any replies', or when work is blocked on a decision, approval or fact that only the client can give. ALSO use, without being asked, whenever a contradiction turns up: after reading a new document, brief, artifact, message or piece of feedback from the client, if it conflicts with an earlier one, with approved wording, with what is built, or with an assumption we are working on, propose a ticket for each conflict. Not for questions to our own team, and not for status updates or announcements."
+description: "Ask a client a question through the project's Slack tickets channel: one message per question with nobody tagged, an urgency, our own decision and a plain-language context, details in the thread. Posts a reviewed batch and checks for replies with a script. Use when the user says 'ticket', 'ask the client', 'post it to the tickets channel', 'what is still unanswered', 'check the tickets', 'any replies', 'set up the tickets', or when work is blocked on a decision, approval or fact that only the client can give. ALSO use, without being asked, whenever a contradiction turns up: after reading a new document, brief, artifact, message or piece of feedback from the client, if it conflicts with an earlier one, with approved wording, with what is built, or with an assumption we are working on, propose a ticket for each conflict. Not for questions to our own team, and not for status updates or announcements."
 allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py *)
 ---
 
@@ -54,15 +54,42 @@ whose token it is. Then:
   one exception. Say back the name, the id and whether the channel is private or shared with another organization,
   and wait for a yes before the first command or connector call that uses it. With more than one match, list them
   and ask. With no connector, ask for the id: it is at the bottom of the channel's "About" panel in Slack. Say once
-  that the README's setup steps set it for good.
+  that the last step of the setup sets it for good.
 - **No token** (`No Slack token`). If the session has a Slack connector, carry on through it as described under
-  "Without a token". If not, tell the user what is missing, point them at the setup steps in the README of
-  https://github.com/Airnauts/slack-tickets and at the Slack app manifest there, `slack-app-manifest.yaml`, and stop.
+  "Without a token", and say once that the setup (below) adds the token. If not, tell the user what is missing,
+  offer to lead them through the setup, and stop until they answer.
 - **Anything else** (a channel variable that is not an id, a missing scope, the app not invited, Slack not
-  reachable): tell the user what the script said, and stop.
+  reachable): tell the user what the script said, offer to lead them through the setup step that fixes it, and stop.
 
 Do not set a token up for them, do not ask them to paste one into the chat, and never print the environment (`env`,
-`printenv`, `echo $SLACK_TICKETS_TOKEN`).
+`printenv`, `echo $SLACK_TICKETS_TOKEN`). Never run a Keychain command, to store the token or to read it:
+`tickets.py --check` is the only test of the token. Never open, search or print a settings file that may hold a
+token, such as `.claude/settings.local.json`. All of this holds even when the user asks you to do it for them.
+
+## Setting up
+
+When the user asks to set the tickets up, or accepts the offer above, run `tickets.py --setup`. It prints the setup
+steps and the Slack app manifest from this skill's folder; it needs no token and calls nobody. Get them this way,
+not by opening the files. The user may not see what a command prints, so what they need goes into your own messages.
+If it says a part is missing from the skill's folder, say so and stop: never write the steps or the manifest from
+memory.
+
+- **One step at a time.** Give the user only the current step, in a few lines, and end your message there. Go on
+  when they say it is done. Never list all the steps at once. Skip a step that the check shows is done.
+- **The manifest.** At the step that creates the Slack app, show the manifest whole, exactly as printed, in a code
+  block for the user to copy. It sits in an installed copy of this skill that the user would not find, so never
+  only name its path.
+- **The channel.** It comes from the user, as under "No channel id" above. Add `--channel=<id>` to every command
+  from then on, unless the project has a channel set.
+- **The token.** The user gets it and stores it, in their own terminal, with the command the steps give. If they
+  paste a token into the chat anyway, do not repeat it, use it or store it. Tell them the chat now holds it, so it
+  has to be replaced as the steps' part "Replace a token" says, and wait until a new one is stored.
+- **The end.** The setup is done when both commands of the step "Check" pass. With the token in the Keychain that is in
+  this session. Where the token only arrives with a new session, say so, and that asking to set the tickets up again
+  there finishes it. When one fails, say what the message means and go back to the step the steps name for it. Then
+  offer the optional last step, which the user does by editing the file themselves, and say that a new session picks it
+  up.
+- **Another agent** than Claude Code follows the steps' "Other agents" part instead of the settings file.
 
 ## Without a token: the Slack connector
 
