@@ -42,6 +42,8 @@ import urllib.request
 
 KEYCHAIN = 'slack-tickets'
 CLOSED = 'white_check_mark'
+HINTS = 3
+HINT_LENGTH = 200
 TIMESTAMP = re.compile(r'\d{10}\.\d{6}').fullmatch
 # The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -246,30 +248,31 @@ def believable(last):
 def read_state(path):
     """The believable part of one state file. Raises on a file that is oddly shaped or unreadable."""
     state = {} if linked(path) or not os.path.lexists(path) or tracked(path) else load(path)
-    seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
+    times = {key: {ts: last for ts, last in state.get(key, {}).items() if believable(last)} for key in ('seen', 'hinted')}
     names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
-    return seen, names
+    return dict(times, names=names)
 
 
 def recall():
     """What --answers remembered, read as something a stranger could have put in the project, from every place
-    state_paths() names: the later timestamp per reply wins, the first name per user stays.
+    state_paths() names: the later timestamp per reply or hint wins, the first name per user stays.
     A missing, unreadable, linked, tracked or oddly shaped file counts as nothing remembered. Never raises."""
-    seen, names = {}, {}
+    seen, hinted, names = {}, {}, {}
     try:
         paths = state_paths()
     except Exception:  # whatever the surroundings are, --list must still load with the skill
         paths = []
     for path in paths:
         try:
-            more_seen, more_names = read_state(path)
+            part = read_state(path)
         except Exception:  # one bad file must not hide the other
             continue
-        for ts, last in more_seen.items():
-            seen[ts] = max(seen.get(ts, last), last, key=float)
-        for user, name in more_names.items():
+        for merged, more in ((seen, part['seen']), (hinted, part['hinted'])):
+            for ts, last in more.items():
+                merged[ts] = max(merged.get(ts, last), last, key=float)
+        for user, name in part['names'].items():
             names.setdefault(user, name)
-    return {'names': names, 'seen': seen}
+    return {'names': names, 'seen': seen, 'hinted': hinted}
 
 
 def write_state(path, state):
@@ -441,7 +444,7 @@ def ticket_line(t, seen):
     day = datetime.datetime.fromtimestamp(float(t['ts'])).strftime('%b %d')
     thread = t.get('reply_count', 0)
     # The ticket's own Details reply comes from its author; anyone else in the thread is an answer or a routing tag.
-    others = [u for u in t.get('reply_users', []) if u != t.get('user')]
+    others = repliers(t)
     unread = bool(others) and float(t.get('latest_reply', '0')) > float(seen.get(t['ts'], '0'))
     fresh = (', others replied' if others else ', no reply yet') + (', NEW since the last check' if unread else '')
     question = lines[0].strip('* ').removeprefix('Q:').strip()
@@ -502,6 +505,27 @@ def closer(tok):
     return is_closed
 
 
+def repliers(ticket):
+    """Who replied in a ticket's thread, its author left out."""
+    return set(ticket.get('reply_users') or []) - {ticket.get('user'), ticket.get('bot_id'), None}
+
+
+def by_people(message):
+    """A person's own top-level message: not a ticket, not from an app, not a join or a reply also sent to the channel."""
+    return bool(message.get('user')) and not message.get('bot_id') and message.get('subtype') in (None, 'file_share') and not is_ticket(message)
+
+
+def hints(ticket, messages):
+    """The first HINTS messages by people other than the ticket's author, posted after it and before the next ticket."""
+    found = []
+    for message in messages[messages.index(ticket) + 1:]:
+        if is_ticket(message) or len(found) == HINTS:
+            break
+        if by_people(message) and not same_author(message, ticket):
+            found.append(message)
+    return found
+
+
 def close(ts):
     if not TIMESTAMP(ts):
         sys.exit('Not closed: the argument is the ticket\'s timestamp, as printed by --answers (like 1700000000.000100).')
@@ -526,6 +550,7 @@ def answers(flags):
     channel, tok = channel_id(), token()
     state = recall()
     names, seen = state.setdefault('names', {}), state.setdefault('seen', {})
+    hinted = state.setdefault('hinted', {})
 
     def name(user):
         if user and user not in names:
@@ -533,8 +558,8 @@ def answers(flags):
             names[user] = profile.get('real_name') or profile.get('name') or user
         return names.get(user, 'someone')
 
-    def plain(text):
-        text = re.sub(r'<@(\w+)(?:\|[^>]*)?>', lambda m: '@' + name(m.group(1)), text or '')
+    def plain(text, look_up=True):
+        text = re.sub(r'<@(\w+)(?:\|[^>]*)?>', lambda m: '@' + (name(m.group(1)) if look_up else names.get(m.group(1), 'someone')), text or '')
         text = re.sub(r'<(https?://[^|>]+)\|([^>]+)>', r'\2', text)
         return re.sub(r'<(https?://[^>]+)>', r'\1', text)
 
@@ -558,7 +583,9 @@ def answers(flags):
             # The ticket's own Details reply, from its author, is part of the ticket, not an answer (bold or not).
             fresh = [r for r in thread if float(r['ts']) > float(last_seen)
                      and not (same_author(r, ticket) and (r.get('text') or '').lstrip(' *\n').startswith('Details'))]
-        if not fresh and not show_all:
+        offered = [] if closed or repliers(ticket) else hints(ticket, messages)
+        new_hints = [m for m in offered if show_all or float(m['ts']) > float(hinted.get(ticket['ts'], '0'))]
+        if not fresh and not new_hints and not show_all:
             if fetched and '--peek' not in flags:  # nothing to show, so no need to read it again until it grows
                 seen[ticket['ts']] = latest
             continue
@@ -572,9 +599,16 @@ def answers(flags):
             body = plain(reply.get('text')).replace('\n', '\n      ')
             files = f' [{len(reply["files"])} file(s) attached]' if reply.get('files') else ''
             print(f'    {name(reply.get("user"))}, {when(reply["ts"])}: {body}{files}')
+        if new_hints:
+            print('  Not in its thread: posted in the channel after it, by others, and may be unrelated:')
+            for m in new_hints:
+                text = ' '.join(plain(m.get('text'), look_up=False).split())
+                print(f'    > {name(m.get("user"))}, {when(m["ts"])}: {text[:HINT_LENGTH]}{"..." if len(text) > HINT_LENGTH else ""}')
         shown += 1
         if '--peek' not in flags and not show_all:
             seen[ticket['ts']] = latest
+            if new_hints:
+                hinted[ticket['ts']] = new_hints[-1]['ts']
     if not shown:
         print('No new replies.')
     for line in lookalikes(messages):

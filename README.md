@@ -83,6 +83,10 @@ A ticket is closed by a check mark from its author or from the app's own token. 
 "seen" for example, leaves it open. A ticket the app posted and a person closed by hand from their own account shows as
 open again; `tickets.py --close <ts>` settles it.
 
+When a client answers in the channel instead of the thread, `--answers` shows up to three messages posted after an
+unanswered ticket, once each, marked as not in its thread. Claude treats them as hints and asks for the answer in the
+thread.
+
 ## The script
 
 Claude runs it for you. By hand, with the two variables set (`--setup` needs neither):
@@ -108,8 +112,9 @@ anything with `--channel=<id>` ask you first. When Claude Code asks, answer yes 
 again" saves a rule that covers every `tickets.py` command, a post included. Your own permission rules come before the
 skill's: a rule of yours that allows every `python3` command makes all of them run without asking.
 
-It needs Python 3 and nothing else. It remembers which replies it has shown in `.slack-tickets/state.json` in the
-project, a folder it creates and keeps out of git. Git worktrees share the main checkout's file.
+It needs Python 3 and nothing else. It remembers which replies and hints it has shown in
+`.slack-tickets/state.json` in the project, a folder it creates and keeps out of git. Git worktrees share the main
+checkout's file.
 
 An agent whose sandbox may not write to the main checkout keeps its own copy in its worktree, so a reply repeats once
 per worktree at most. To share it, add the main checkout's `.slack-tickets` folder to the folders the sandbox may

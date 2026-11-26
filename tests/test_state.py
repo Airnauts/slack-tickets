@@ -11,7 +11,7 @@ from unittest import mock
 
 from helpers import TicketsTestCase, clean_git_environment
 
-EMPTY = {'names': {}, 'seen': {}}
+EMPTY = {'names': {}, 'seen': {}, 'hinted': {}}
 needs_git = unittest.skipUnless(shutil.which('git'), 'git is not installed')
 needs_links = unittest.skipUnless(hasattr(os, 'symlink'), 'no symbolic links on this system')
 
@@ -194,13 +194,21 @@ class WorktreeStateTests(StateTestCase):
                 self.put_in(self.tree, json.dumps({'seen': {'1.0': tree_last}}))
                 self.assertEqual(self.tickets.recall()['seen'], {'1.0': '3.000003'})
 
+    def test_the_later_hint_wins_whichever_place_holds_it(self):
+        os.chdir(self.tree)
+        for main_last, tree_last in (('2.000002', '3.000003'), ('3.000003', '2.000002')):
+            with self.subTest(main=main_last):
+                self.put_in(self.repo, json.dumps({'hinted': {'1.0': main_last}}))
+                self.put_in(self.tree, json.dumps({'hinted': {'1.0': tree_last}}))
+                self.assertEqual(self.tickets.recall()['hinted'], {'1.0': '3.000003'})
+
     def test_a_broken_file_in_one_place_does_not_hide_the_other(self):
         os.chdir(self.tree)
         for broken, good in ((self.repo, self.tree), (self.tree, self.repo)):
             with self.subTest(broken=broken):
                 self.put_in(broken, '{not json')
                 self.put_in(good, json.dumps({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}}))
-                self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}})
+                self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}})
 
     @needs_links
     @needs_permissions
@@ -251,7 +259,7 @@ class InheritedGitVariablesTests(StateTestCase):
 class TrackedStateTests(StateTestCase):
     """A file that arrives through a branch is tracked by git. The script's own file never is."""
     PLANTED = {'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}}
-    FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}}
+    FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}, 'hinted': {}}
 
     def commit_state(self, folder, text):
         self.put_in(folder, text)
@@ -334,7 +342,7 @@ class StatePathOutsideGitTests(StateTestCase):
         os.makedirs(plain)
         os.chdir(plain)
         self.tickets.remember({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}})
-        self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}})
+        self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}})
 
 
 @needs_links
@@ -390,6 +398,11 @@ class StateContentTests(StateTestCase):
     def test_only_believable_timestamps_are_kept(self):
         self.write_odd_values()
         self.assertEqual(self.tickets.recall().get('seen'), {'1.0': '2.000002'})
+
+    def test_only_believable_hint_timestamps_are_kept(self):
+        self.project('hints')
+        self.put(json.dumps({'hinted': {'1.0': '2.000002', '3.0': 'inf', '4.0': None}}))
+        self.assertEqual(self.tickets.recall()['hinted'], {'1.0': '2.000002'})
 
     def test_a_name_stays_on_one_line(self):
         self.write_odd_values()
