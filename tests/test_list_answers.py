@@ -259,9 +259,12 @@ class AnswersTests(SlackTestCase):
         self.assertEqual(lines_of(out)[-1], '2 tickets, 1 open.')
 
     def test_all_shows_replies_that_were_already_seen_and_remembers_nothing(self):
-        self.remember_seen({T1: self.latest})
-        self.assertIn('Line one', self.answers('--all'))
-        self.assertEqual(self.state()['seen'], {T1: self.latest})
+        older = '1700000250.000100'
+        self.remember_seen({T1: older})
+        out = self.answers('--all')
+        self.assertIn('Line one', out)
+        self.assertIn('Ann Client', out)
+        self.assertEqual(self.state()['seen'], {T1: older})
 
     def test_a_name_is_looked_up_once(self):
         self.answers()
@@ -277,8 +280,8 @@ class AnswersTests(SlackTestCase):
 
 
 class ReplyTests(SlackTestCase):
-    def note(self, text, name='note.txt'):
-        return self.write(name, text)
+    def note(self, text):
+        return self.write('note.txt', text)
 
     def test_a_dry_run_prints_the_text_and_posts_nothing(self):
         result = self.run_main('--reply', T1, self.note('  We will go ahead with the default.\n'))

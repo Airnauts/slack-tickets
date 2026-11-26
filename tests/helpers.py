@@ -44,17 +44,28 @@ def load_script():
 tickets = load_script()
 
 
-def run_cli(args, channel=None, extra_env=None, cwd=None):
-    """Runs the script as a command, with nothing on PATH and no token. Returns (exit code, output).
-    Never pass --post here: with no token the script stops before it could call Slack."""
+def clean_git_environment(ceiling):
+    """Makes git in this process independent of the machine. Removes every inherited GIT_* variable (git exports
+    GIT_DIR to a hook run from a linked worktree), stops git from looking for a repository at or above ceiling, and
+    turns off the global and system configuration (hooks, templates, signing), so the tests' own git commands and
+    the script's state_path() never act on a real repository."""
+    for name in [n for n in os.environ if n.startswith('GIT_')]:
+        del os.environ[name]
+    os.environ['GIT_CEILING_DIRECTORIES'] = ceiling
+    os.environ['GIT_CONFIG_GLOBAL'] = os.devnull
+    os.environ['GIT_CONFIG_NOSYSTEM'] = '1'
+
+
+def run_cli(args, channel=None):
+    """Runs the script as a command, with nothing on PATH, no token and no GIT_* variables. Returns (exit code,
+    output). Never posts: with no token the script stops before it could call Slack."""
+    assert '--post' not in args, 'command line tests never post'
     with tempfile.TemporaryDirectory(prefix='tickets-path-') as empty:
-        env = {k: v for k, v in os.environ.items() if not k.startswith('SLACK_TICKETS_')}
-        env['PATH'] = empty
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('SLACK_TICKETS_', 'GIT_'))}
         if channel is not None:
             env['SLACK_TICKETS_CHANNEL'] = channel
-        env.update(extra_env or {})
-        env.pop('SLACK_TICKETS_TOKEN', None)
-        done = subprocess.run([sys.executable, SCRIPT, *args], env=env, cwd=cwd or empty,
+        env['PATH'] = empty
+        done = subprocess.run([sys.executable, SCRIPT, *args], env=env, cwd=empty,
                               capture_output=True, text=True, timeout=60)
     return done.returncode, done.stdout + done.stderr
 
@@ -104,7 +115,8 @@ class TicketsTestCase(unittest.TestCase):
         os.environ.pop('SLACK_TICKETS_CHANNEL', None)
         os.environ.pop('SLACK_TICKETS_TOKEN', None)
         # A scratch folder is never part of a repository that happens to hold the temporary folder.
-        os.environ['GIT_CEILING_DIRECTORIES'] = os.path.dirname(self.tmp)
+        self.git_ceiling = os.path.dirname(self.tmp)
+        clean_git_environment(self.git_ceiling)
 
         self.slack = FakeSlack()
         self.patch(tickets, 'call', self.slack)

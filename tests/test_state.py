@@ -9,7 +9,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from helpers import TicketsTestCase
+from helpers import TicketsTestCase, clean_git_environment
 
 EMPTY = {'names': {}, 'seen': {}}
 needs_git = unittest.skipUnless(shutil.which('git'), 'git is not installed')
@@ -18,6 +18,13 @@ needs_links = unittest.skipUnless(hasattr(os, 'symlink'), 'no symbolic links on 
 
 def git(*args, cwd):
     subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
+
+
+def make_repo(path):
+    """A git repository at path with one empty commit."""
+    git('init', '-q', cwd=path)
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false',
+        'commit', '-q', '--allow-empty', '-m', 'first', cwd=path)
 
 
 class StateTestCase(TicketsTestCase):
@@ -54,9 +61,7 @@ class StatePathInRepositoryTests(StateTestCase):
         super().setUp()
         self.repo, self.tree = os.path.join(self.tmp, 'repo'), os.path.join(self.tmp, 'tree')
         os.makedirs(os.path.join(self.repo, 'src', 'deep'))
-        git('init', '-q', cwd=self.repo)
-        git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false',
-            'commit', '-q', '--allow-empty', '-m', 'first', cwd=self.repo)
+        make_repo(self.repo)
         git('worktree', 'add', '-q', self.tree, cwd=self.repo)
         self.want = self.state_file(self.repo)
 
@@ -73,9 +78,10 @@ class StatePathInRepositoryTests(StateTestCase):
         self.assert_path(self.tickets.state_path(), self.want)
 
     def test_no_git_on_path_uses_the_current_folder(self):
-        os.chdir(self.repo)
+        deep = os.path.join(self.repo, 'src', 'deep')
+        os.chdir(deep)
         with mock.patch.dict(os.environ, {'PATH': os.path.join(self.tmp, 'nothing-here')}):
-            self.assert_path(self.tickets.state_path(), self.want)
+            self.assert_path(self.tickets.state_path(), self.state_file(deep))
 
     def test_nothing_remembered_yet(self):
         os.chdir(self.repo)
@@ -109,6 +115,37 @@ class StatePathInRepositoryTests(StateTestCase):
         self.assertEqual(self.tickets.recall(), EMPTY)
 
 
+@needs_git
+class InheritedGitVariablesTests(StateTestCase):
+    """git exports GIT_DIR to a hook run from a linked worktree. The tests must not act on that repository."""
+
+    def heads(self, repo):
+        found = {}
+        for folder, _, names in os.walk(os.path.join(repo, '.git', 'refs', 'heads')):
+            for name in names:
+                with open(os.path.join(folder, name), encoding='utf-8') as source:
+                    found[os.path.join(folder, name)] = source.read()
+        return found
+
+    def test_the_state_stays_out_of_a_repository_named_by_git_variables(self):
+        repo, plain = os.path.join(self.tmp, 'real-repo'), os.path.join(self.tmp, 'plain')
+        os.makedirs(repo)
+        os.makedirs(plain)
+        make_repo(repo)
+        before = self.heads(repo)
+        self.assertTrue(before)
+        os.environ['GIT_DIR'] = os.path.join(repo, '.git')
+        os.environ['GIT_WORK_TREE'] = repo
+        clean_git_environment(self.git_ceiling)
+        self.assertEqual(sorted(n for n in os.environ if n.startswith('GIT_')),
+                         ['GIT_CEILING_DIRECTORIES', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'])
+        os.chdir(plain)
+        self.assert_path(self.tickets.state_path(), self.state_file(plain))
+        self.tickets.remember({'seen': {'1.000001': '2.000002'}, 'names': {}})
+        self.assertFalse(os.path.exists(os.path.join(repo, '.slack-tickets')))
+        self.assertEqual(self.heads(repo), before)
+
+
 class StatePathOutsideGitTests(StateTestCase):
     def test_folder_outside_git(self):
         plain = os.path.join(self.tmp, 'plain')
@@ -121,17 +158,13 @@ class StatePathOutsideGitTests(StateTestCase):
 class LinkedStateTests(StateTestCase):
     def test_a_linked_state_file_is_not_read(self):
         self.project('link-file')
-        victim = os.path.join(self.tmp, 'link-file-outside', 'victim.txt')
-        with open(victim, 'w', encoding='utf-8') as out:
-            out.write(json.dumps({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}}))
+        victim = self.write_json('link-file-outside/victim.txt', {'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}})
         os.symlink(victim, os.path.join('.slack-tickets', 'state.json'))
         self.assertEqual(self.tickets.recall(), EMPTY)
 
     def test_a_linked_state_file_is_not_written_through(self):
         self.project('link-file')
-        victim = os.path.join(self.tmp, 'link-file-outside', 'victim.txt')
-        with open(victim, 'w', encoding='utf-8') as out:
-            out.write('keep me')
+        victim = self.write('link-file-outside/victim.txt', 'keep me')
         os.symlink(victim, os.path.join('.slack-tickets', 'state.json'))
         self.assertIn('could not be remembered', self.remember_quietly({'seen': {}, 'names': {}}))
         with open(victim, encoding='utf-8') as source:
