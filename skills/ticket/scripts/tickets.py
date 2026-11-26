@@ -44,12 +44,13 @@ def channel_id():
     """The project's channel, or the one named with --channel=<id> when the project has none."""
     valid = re.compile(r'[CG][A-Z0-9]{6,}').fullmatch
     value = os.environ.get('SLACK_TICKETS_CHANNEL', '').strip()
-    named = {a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--channel=')} - {''}
+    named = {a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--channel=')}
     if value and not valid(value):  # never print it: a token put in the wrong variable would land here
         sys.exit('SLACK_TICKETS_CHANNEL is set, but not to a channel id (like C0123456789). Correct it where it is set.')
-    if len(named) > 1 or (value and named and named != {value}):
+    ids = (named | {value}) - {''}
+    if len(ids) > 1:
         sys.exit('--channel names one channel, and only for a project that has none set.')
-    chosen = value or next(iter(named), '')
+    chosen = next(iter(ids), '')
     if not valid(chosen):
         sys.exit('SLACK_TICKETS_CHANNEL is not set to a channel id (like C0123456789). Set it in the environment (in '
                  'Claude Code: under "env" in the project\'s .claude/settings.local.json, then start a new session), '
