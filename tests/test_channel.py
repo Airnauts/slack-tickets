@@ -9,10 +9,12 @@ from helpers import CHANNEL, OTHER_CHANNEL, THIRD_CHANNEL, TicketsTestCase, run_
 TOP = '*Q: Test?*\n*Urgency:* No rush · *Asked by:* Test'
 
 
-class ChannelFlagTests(TicketsTestCase):
+class ChannelTestCase(TicketsTestCase):
     def batch(self, **extra):
         return self.write_json('batch.json', {**extra, 'tickets': [{'id': 't', 'top': TOP, 'details': '*Details*\nx'}]})
 
+
+class ChannelFlagTests(ChannelTestCase):
     def test_a_flag_is_accepted_when_the_project_has_no_channel(self):
         code, out = run_cli(['--list', f'--channel={CHANNEL}'])
         self.assertIn('could not be read: No Slack token', out)
@@ -69,12 +71,11 @@ class ChannelFlagTests(TicketsTestCase):
         self.assertIn('No Slack token', out)
 
 
-class BatchChannelFieldTests(TicketsTestCase):
+class BatchChannelFieldTests(ChannelTestCase):
     """The batch's own "channel" field, in a dry run with the project's channel set."""
 
     def dry_run(self, batch):
-        path = self.write_json('batch.json', dict(batch, tickets=[{'id': 't', 'top': TOP, 'details': '*Details*\nx'}]))
-        return run_cli([path], channel=OTHER_CHANNEL)
+        return run_cli([self.batch(**batch)], channel=OTHER_CHANNEL)
 
     def test_an_empty_null_same_or_zero_channel_is_accepted(self):
         for value in ('', None, OTHER_CHANNEL, 0):

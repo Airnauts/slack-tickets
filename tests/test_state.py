@@ -20,6 +20,13 @@ def git(*args, cwd):
     subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
 
 
+def make_repo(path):
+    """A git repository at path with one empty commit."""
+    git('init', '-q', cwd=path)
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false',
+        'commit', '-q', '--allow-empty', '-m', 'first', cwd=path)
+
+
 class StateTestCase(TicketsTestCase):
     def state_file(self, folder):
         return os.path.join(folder, '.slack-tickets', 'state.json')
@@ -54,9 +61,7 @@ class StatePathInRepositoryTests(StateTestCase):
         super().setUp()
         self.repo, self.tree = os.path.join(self.tmp, 'repo'), os.path.join(self.tmp, 'tree')
         os.makedirs(os.path.join(self.repo, 'src', 'deep'))
-        git('init', '-q', cwd=self.repo)
-        git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false',
-            'commit', '-q', '--allow-empty', '-m', 'first', cwd=self.repo)
+        make_repo(self.repo)
         git('worktree', 'add', '-q', self.tree, cwd=self.repo)
         self.want = self.state_file(self.repo)
 
@@ -125,9 +130,7 @@ class InheritedGitVariablesTests(StateTestCase):
         repo, plain = os.path.join(self.tmp, 'real-repo'), os.path.join(self.tmp, 'plain')
         os.makedirs(repo)
         os.makedirs(plain)
-        git('init', '-q', cwd=repo)
-        git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false',
-            'commit', '-q', '--allow-empty', '-m', 'first', cwd=repo)
+        make_repo(repo)
         before = self.heads(repo)
         self.assertTrue(before)
         os.environ['GIT_DIR'] = os.path.join(repo, '.git')
@@ -153,17 +156,13 @@ class StatePathOutsideGitTests(StateTestCase):
 class LinkedStateTests(StateTestCase):
     def test_a_linked_state_file_is_not_read(self):
         self.project('link-file')
-        victim = os.path.join(self.tmp, 'link-file-outside', 'victim.txt')
-        with open(victim, 'w', encoding='utf-8') as out:
-            out.write(json.dumps({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}}))
+        victim = self.write_json('link-file-outside/victim.txt', {'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}})
         os.symlink(victim, os.path.join('.slack-tickets', 'state.json'))
         self.assertEqual(self.tickets.recall(), EMPTY)
 
     def test_a_linked_state_file_is_not_written_through(self):
         self.project('link-file')
-        victim = os.path.join(self.tmp, 'link-file-outside', 'victim.txt')
-        with open(victim, 'w', encoding='utf-8') as out:
-            out.write('keep me')
+        victim = self.write('link-file-outside/victim.txt', 'keep me')
         os.symlink(victim, os.path.join('.slack-tickets', 'state.json'))
         self.assertIn('could not be remembered', self.remember_quietly({'seen': {}, 'names': {}}))
         with open(victim, encoding='utf-8') as source:

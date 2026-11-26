@@ -277,8 +277,8 @@ class AnswersTests(SlackTestCase):
 
 
 class ReplyTests(SlackTestCase):
-    def note(self, text, name='note.txt'):
-        return self.write(name, text)
+    def note(self, text):
+        return self.write('note.txt', text)
 
     def test_a_dry_run_prints_the_text_and_posts_nothing(self):
         result = self.run_main('--reply', T1, self.note('  We will go ahead with the default.\n'))

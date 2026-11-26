@@ -51,7 +51,7 @@ def drop_git_variables():
         del os.environ[name]
 
 
-def run_cli(args, channel=None, extra_env=None, cwd=None):
+def run_cli(args, channel=None):
     """Runs the script as a command, with nothing on PATH, no token and no GIT_* variables. Returns (exit code,
     output). Never posts: with no token the script stops before it could call Slack."""
     assert '--post' not in args, 'command line tests never post'
@@ -59,11 +59,8 @@ def run_cli(args, channel=None, extra_env=None, cwd=None):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('SLACK_TICKETS_', 'GIT_'))}
         if channel is not None:
             env['SLACK_TICKETS_CHANNEL'] = channel
-        env.update(extra_env or {})
-        env.pop('SLACK_TICKETS_TOKEN', None)
-        env = {k: v for k, v in env.items() if not k.startswith('GIT_')}
         env['PATH'] = empty
-        done = subprocess.run([sys.executable, SCRIPT, *args], env=env, cwd=cwd or empty,
+        done = subprocess.run([sys.executable, SCRIPT, *args], env=env, cwd=empty,
                               capture_output=True, text=True, timeout=60)
     return done.returncode, done.stdout + done.stderr
 
