@@ -93,11 +93,12 @@ def show_file(title, name):
 
 
 def sources():
-    """The register of client documents: the project's, else the one under the home folder. Never raises. Reads only
-    a plain file with one name and at most 1 MB, reached through no link, so it cannot print another file or stall."""
+    """The register of client documents: the project's (this checkout, then the main checkout), else the one under the
+    home folder. Never raises. Reads only a plain file with one name and at most 1 MB, reached through no link, so it
+    cannot print another file or stall."""
     places = []
-    try:  # the top folder of this checkout, as the state file finds it
-        places.append((os.path.dirname(os.path.dirname(state_paths()[-1])), ('.claude', 'slack-tickets', 'sources.md')))
+    try:  # the top folders of this checkout and of the main one, as the state files find them
+        places += [(os.path.dirname(os.path.dirname(path)), ('.claude', 'slack-tickets', 'sources.md')) for path in reversed(state_paths())]
     except Exception:  # the current folder may be gone
         pass
     try:
@@ -110,9 +111,8 @@ def sources():
             print(f'(Not read: {path} is reached through a link.)')
             continue
         try:  # no following of a link and no waiting on a pipe; the checks and the read use one descriptor
-            fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
-            with os.fdopen(fd, 'rb') as source:
-                info = os.fstat(fd)
+            with open(path, 'rb', opener=lambda name, flags: os.open(name, flags | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))) as source:
+                info = os.fstat(source.fileno())
                 refusal = ('not a plain file' if not stat.S_ISREG(info.st_mode)
                            else 'it has more than one name' if info.st_nlink != 1
                            else 'over 1 MB' if info.st_size > 1_000_000 else '')
@@ -125,7 +125,11 @@ def sources():
         if refusal:
             print(f'(Not read: {path} ({refusal}).)')
             continue
-        text = re.sub(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]', ' ', text).strip()  # nothing in it can pass for the frame
+        text = re.sub(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]', ' ', text).strip()
+        if not text:
+            print(f'The register is empty: {path}')
+            return
+        # The header's line count is what bounds the register: a line in the body can still look like the end marker.
         lines = count(text.count('\n') + 1, 'line')
         try:
             print(f'===== The register: {path} ({lines}) =====\n{text}\n===== End of the register =====')
@@ -381,6 +385,17 @@ def history(channel, tok):
     return sorted((m for m in messages if (m.get('text') or '').lstrip().startswith('*Q:')), key=lambda m: float(m['ts']))
 
 
+def replies(channel, tok, ts):
+    """Every message of a ticket's thread, the ticket first, over as many pages as Slack serves."""
+    messages, cursor = [], None
+    while True:
+        page = call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=200, **({'cursor': cursor} if cursor else {}))
+        messages += page.get('messages', [])
+        cursor = page.get('response_metadata', {}).get('next_cursor')
+        if not cursor:
+            return messages
+
+
 def listing():
     """One line per open ticket, from one call to Slack. Claude Code loads it into the skill's text, so it never exits with an error."""
     try:
@@ -413,7 +428,7 @@ def listing():
 
 def ticket_at(ts, tok, channel):
     """The message at ts when it is a top-level message that is a ticket, else None."""
-    parent = call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages', [{}])[0]
+    parent = (call('conversations.replies', tok, read=True, channel=channel, ts=ts, limit=1).get('messages') or [{}])[0]
     top_level = parent.get('thread_ts', ts) == ts
     return parent if parent.get('ts') == ts and top_level and (parent.get('text') or '').lstrip().startswith('*Q:') else None
 
@@ -483,15 +498,14 @@ def answers(flags):
         open_count += 0 if closed else 1
         last_seen = '0' if show_all else seen.get(ticket['ts'], '0')
         latest = ticket.get('latest_reply', '0')
-        fresh, complete = [], False
+        fresh, fetched = [], False
         if ticket.get('reply_count') and (show_all or float(latest) > float(last_seen)):
-            response = call('conversations.replies', tok, read=True, channel=channel, ts=ticket['ts'], limit=200)
-            thread, complete = response.get('messages', [])[1:], not response.get('has_more')
+            thread, fetched = replies(channel, tok, ticket['ts'])[1:], True
             # The ticket's own Details reply, from its author, is part of the ticket, not an answer (bold or not).
             fresh = [r for r in thread if float(r['ts']) > float(last_seen)
                      and not (same_author(r, ticket) and (r.get('text') or '').lstrip(' *\n').startswith('Details'))]
         if not fresh and not show_all:
-            if complete and '--peek' not in flags:  # nothing to show, so no need to read it again until it grows
+            if fetched and '--peek' not in flags:  # nothing to show, so no need to read it again until it grows
                 seen[ticket['ts']] = latest
             continue
         lines = plain(ticket['text']).split('\n')

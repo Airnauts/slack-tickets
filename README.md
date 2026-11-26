@@ -70,7 +70,8 @@ ones. Put it at `.claude/slack-tickets/sources.md` in the project, or at `~/.cla
 to keep it on your machine. A template is in
 [`skills/ticket/assets/sources-template.md`](skills/ticket/assets/sources-template.md). Claude gets it with
 `tickets.py --sources-template`. Claude reads it with `tickets.py --sources`. That command needs no go from you, also for
-the register in your home folder. It prints at most 1 MB and nothing that is reached through a link.
+the register in your home folder. It prints at most 1 MB, and nothing when the register or its folder is a link. In a
+git worktree it also finds a register that is only in the main checkout.
 
 ## The script
 

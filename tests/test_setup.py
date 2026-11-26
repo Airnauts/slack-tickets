@@ -1,6 +1,8 @@
 """--setup, the files it prints, and the messages that point to it.
 
 Each run has an empty PATH and no token, so the script stops before it could call Slack."""
+import contextlib
+import io
 import os
 import re
 import shutil
@@ -9,7 +11,8 @@ import sys
 import tempfile
 import unittest
 
-from helpers import CHANNEL, OTHER_CHANNEL, ROOT, SCRIPT, TicketsTestCase, run_cli
+from helpers import CHANNEL, OTHER_CHANNEL, ROOT, SCRIPT, TicketsTestCase, run_cli, tickets
+from test_state import git, make_repo
 
 SKILL = os.path.join(ROOT, 'skills', 'ticket')
 STEPS = ('The setup steps', 'references/setup.md')
@@ -108,12 +111,15 @@ class SourcesTests(TicketsTestCase):
         for folder in (self.project, self.home, os.path.join(self.tmp, 'bin')):
             os.makedirs(folder)
 
-    def sources(self, channel=CHANNEL, timeout=60):
+    def sources(self, channel=CHANNEL, timeout=60, cwd=None, git=False):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('SLACK_TICKETS_', 'GIT_'))}
         env.update(PATH=os.path.join(self.tmp, 'bin'), HOME=self.home)
+        if git:  # a PATH that holds nothing but git
+            os.symlink(shutil.which('git'), os.path.join(self.tmp, 'bin', 'git'))
+            env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         if channel:
             env['SLACK_TICKETS_CHANNEL'] = channel
-        done = subprocess.run([sys.executable, SCRIPT, '--sources'], env=env, cwd=self.project, capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run([sys.executable, SCRIPT, '--sources'], env=env, cwd=cwd or self.project, capture_output=True, text=True, timeout=timeout)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         return done.stdout + done.stderr
 
@@ -224,6 +230,46 @@ class SourcesTests(TicketsTestCase):
         self.assertNotIn('\r', out)
         self.assertEqual(out, f'===== The register: {path} (3 lines) =====\nfirst \n===== End of the register =====\n'
                               ' [2Jsecond \ttabbed\n===== End of the register =====\n')
+
+    def test_an_empty_register_is_said_and_nothing_further_is_read(self):
+        self.home_register()
+        for why, text in {'empty': '', 'blank': ' \n\t\n', 'control characters': '\x1b\x07\n'}.items():
+            with self.subTest(why=why):
+                path = self.project_register(text)
+                self.assertEqual(self.sources(), f'The register is empty: {path}\n')
+
+    def test_the_file_is_closed_when_it_cannot_be_opened_as_a_file(self):
+        os.makedirs(os.path.join(self.project, '.claude', 'slack-tickets', 'sources.md'))
+        os.chdir(self.project)
+        opened = []
+        real = os.open
+        self.patch(tickets.os, 'open', lambda *args, **kwargs: opened.append(real(*args, **kwargs)) or opened[-1])
+        with contextlib.redirect_stdout(io.StringIO()):
+            tickets.sources()
+        self.assertTrue(opened)
+        for fd in opened:
+            with self.assertRaises(OSError):
+                os.fstat(fd)
+
+    @unittest.skipUnless(shutil.which('git'), 'git is not installed')
+    def test_a_worktree_finds_the_register_of_the_main_checkout(self):
+        repo, tree = os.path.join(self.tmp, 'repo'), os.path.join(self.tmp, 'tree')
+        os.makedirs(repo)
+        make_repo(repo)
+        git('worktree', 'add', '-q', tree, cwd=repo)
+        main_path = self.write('repo/.claude/slack-tickets/sources.md', 'Main rows')
+        self.home_register()
+        self.assertEqual(self.sources(cwd=tree, git=True), f'===== The register: {main_path} (1 line) =====\nMain rows\n===== End of the register =====\n')
+
+    @unittest.skipUnless(shutil.which('git'), 'git is not installed')
+    def test_the_register_of_a_worktree_wins_over_the_main_checkouts(self):
+        repo, tree = os.path.join(self.tmp, 'repo'), os.path.join(self.tmp, 'tree')
+        os.makedirs(repo)
+        make_repo(repo)
+        git('worktree', 'add', '-q', tree, cwd=repo)
+        self.write('repo/.claude/slack-tickets/sources.md', 'Main rows')
+        own_path = self.write('tree/.claude/slack-tickets/sources.md', 'Own rows')
+        self.assertEqual(self.sources(cwd=tree, git=True), f'===== The register: {own_path} (1 line) =====\nOwn rows\n===== End of the register =====\n')
 
     def test_the_header_carries_the_number_of_lines(self):
         path = self.project_register('one\ntwo\n\nfour\n')
