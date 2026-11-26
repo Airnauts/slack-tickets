@@ -42,15 +42,20 @@ CLOSED = 'white_check_mark'
 
 def channel_id():
     """The project's channel, or the one named with --channel=<id> when the project has none."""
+    valid = re.compile(r'[CG][A-Z0-9]{6,}').fullmatch
     value = os.environ.get('SLACK_TICKETS_CHANNEL', '').strip()
-    named = next((a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--channel=')), '')
-    if value and named and named != value:
-        sys.exit(f"This project's channel is {value}. --channel is only for a project without one.")
-    if not re.fullmatch(r'[CG][A-Z0-9]{6,}', value or named):
+    named = {a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--channel=')}
+    if value and not valid(value):  # never print it: a token put in the wrong variable would land here
+        sys.exit('SLACK_TICKETS_CHANNEL is set, but not to a channel id (like C0123456789). Correct it where it is set.')
+    ids = (named | {value}) - {''}
+    if len(ids) > 1:
+        sys.exit('--channel names one channel, and only for a project that has none set.')
+    chosen = next(iter(ids), '')
+    if not valid(chosen):
         sys.exit('SLACK_TICKETS_CHANNEL is not set to a channel id (like C0123456789). Set it in the environment (in '
                  'Claude Code: under "env" in the project\'s .claude/settings.local.json, then start a new session), '
                  'or name the channel for one run with --channel=<id>.')
-    return value or named
+    return chosen
 
 
 def token():
@@ -190,7 +195,9 @@ def problems(tickets):
 def post(path, flags):
     batch = load(path)
     tickets = batch.get('tickets', [])
-    channel = batch.get('channel') or channel_id()
+    channel = channel_id()
+    if batch.get('channel') and batch['channel'] != channel:
+        sys.exit('Not posted: the batch names another channel. Take "channel" out of the batch.')
     wrong = problems(tickets)
     if wrong:
         sys.exit('Not posted:\n  ' + '\n  '.join(wrong))
@@ -350,8 +357,9 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     flags = {a for a in sys.argv[1:] if a.startswith('--')}
     if '--check' in flags:
+        print(f'Channel {channel_id()}.')
         who = call('auth.test', token())
-        print(f'Channel {channel_id()}. Posting as {who.get("user")} in {who.get("team")}' + (' (a bot)' if who.get('bot_id') else ' (a person)'))
+        print(f'Posting as {who.get("user")} in {who.get("team")}' + (' (a bot)' if who.get('bot_id') else ' (a person)'))
     elif '--list' in flags:
         listing()
     elif '--answers' in flags:
