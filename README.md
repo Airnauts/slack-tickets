@@ -44,8 +44,8 @@ to `slack.com`.
 ## Set up
 
 Ask Claude, or your agent, to "set up the tickets". It leads you through the steps one at a time, shows the Slack app
-manifest for you to copy, and checks the result in the same session. It never sees the token: you store it yourself,
-from your own terminal. The steps are in [`skills/ticket/references/setup.md`](skills/ticket/references/setup.md),
+manifest for you to copy, and checks the result in the same session. It never asks for the token: you store it
+yourself, from your own terminal. The steps are in [`skills/ticket/references/setup.md`](skills/ticket/references/setup.md),
 and the manifest is [`skills/ticket/assets/slack-app-manifest.yaml`](skills/ticket/assets/slack-app-manifest.yaml).
 
 In short: once per workspace, someone creates the Slack app from the manifest and shares its bot token through a

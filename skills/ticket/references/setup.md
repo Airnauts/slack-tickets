@@ -56,8 +56,10 @@ security add-generic-password -U -s slack-tickets -a slack -w
 It asks for the token without showing it. Paste it and press Enter. `-U` replaces a token stored before. The script
 finds it there in every project and every session, with nothing else to set.
 
-Not on a Mac: in Claude Code, put the token in `.claude/settings.local.json` yourself (step 7 shows the file) and
-start a new session. With another agent, see "Other agents" below.
+Not on a Mac: in Claude Code, the token goes into `.claude/settings.local.json`. First make sure git will not pick
+that file up: ask the agent to run `git check-ignore .claude/settings.local.json`, which prints the name when git
+ignores it. If it prints nothing, add the file to `.gitignore` before anything else. Then put the token in the file
+yourself (step 7 shows the file) and start a new session. With another agent, see "Other agents" below.
 
 ## 5. Invite the app
 
@@ -85,6 +87,16 @@ The first ends with "(a bot)". The second starts with `Channel <id>:`. Then the 
 - `SLACK_TICKETS_CHANNEL is set, but not to a channel id`: correct it where it is set (step 7).
 - `--channel names one channel`: the project has a channel set already. Leave `--channel=<id>` out.
 
+## Replace a token
+
+Do this when a token was pasted into a chat, a message or a file that others can read. Whoever owns the Slack app
+does it; if that is not you, ask them.
+
+1. On the app's "OAuth & Permissions" page at https://api.slack.com/apps, revoke the app's tokens. Installing the
+   app again without revoking keeps the old token working.
+2. Install the app to the workspace again and copy the new "Bot User OAuth Token".
+3. Store it (step 4), and pass it to teammates through the password manager. Then check (step 6).
+
 ## 7. For good (optional)
 
 The id given in step 1 lasts one session. To keep it, add it yourself to the project's `.claude/settings.local.json`
@@ -111,10 +123,12 @@ starting the agent:
 export SLACK_TICKETS_CHANNEL=C0123456789
 ```
 
-On a Mac the token can stay in the Keychain (step 4). Elsewhere, set it in the same shell without showing it or
-keeping it in the history: `read -rs SLACK_TICKETS_TOKEN && export SLACK_TICKETS_TOKEN`, then paste it and press
-Enter. Keep the token out of your shell profile. An agent started before the variables were set does not see them:
-start it again and run the check (step 6) in the new session.
+On a Mac the token can stay in the Keychain (step 4). Elsewhere, in bash or zsh, set it in the same shell without
+showing it or keeping it in the history: `read -rs SLACK_TICKETS_TOKEN && export SLACK_TICKETS_TOKEN`, then paste it
+and press Enter. If the shell answers with an error, stop: do not paste the token. Every command started from that
+shell can read the variable, so close the shell when you are done, or run `unset SLACK_TICKETS_TOKEN`. Keep the
+token out of your shell profile. An agent started before the variables were set does not see them: start it again
+and run the check (step 6) in the new session.
 
 The script calls `slack.com`, so the agent's sandbox has to allow network access. Codex blocks it by default, and the
 script then says "Slack could not be reached". Where the agent can limit it, allow `slack.com` only.

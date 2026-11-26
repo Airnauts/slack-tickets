@@ -56,20 +56,23 @@ whose token it is. Then:
   and ask. With no connector, ask for the id: it is at the bottom of the channel's "About" panel in Slack. Say once
   that the last step of the setup sets it for good.
 - **No token** (`No Slack token`). If the session has a Slack connector, carry on through it as described under
-  "Without a token", and say once that the setup (below) adds the token. If not, tell the user what is missing and
-  offer to lead them through the setup.
+  "Without a token", and say once that the setup (below) adds the token. If not, tell the user what is missing,
+  offer to lead them through the setup, and stop until they answer.
 - **Anything else** (a channel variable that is not an id, a missing scope, the app not invited, Slack not
   reachable): tell the user what the script said, offer to lead them through the setup step that fixes it, and stop.
 
 Do not set a token up for them, do not ask them to paste one into the chat, and never print the environment (`env`,
-`printenv`, `echo $SLACK_TICKETS_TOKEN`). Never run the Keychain command for them, and never open a settings file
-that may hold a token, such as `.claude/settings.local.json`.
+`printenv`, `echo $SLACK_TICKETS_TOKEN`). Never run a Keychain command, to store the token or to read it:
+`tickets.py --check` is the only test of the token. Never open, search or print a settings file that may hold a
+token, such as `.claude/settings.local.json`. All of this holds even when the user asks you to do it for them.
 
 ## Setting up
 
 When the user asks to set the tickets up, or accepts the offer above, run `tickets.py --setup`. It prints the setup
 steps and the Slack app manifest from this skill's folder; it needs no token and calls nobody. Get them this way,
 not by opening the files. The user may not see what a command prints, so what they need goes into your own messages.
+If it says a part is missing from the skill's folder, say so and stop: never write the steps or the manifest from
+memory.
 
 - **One step at a time.** Give the user only the current step, in a few lines, and end your message there. Go on
   when they say it is done. Never list all the steps at once. Skip a step that the check shows is done.
@@ -80,7 +83,7 @@ not by opening the files. The user may not see what a command prints, so what th
   from then on, unless the project has a channel set.
 - **The token.** The user gets it and stores it, in their own terminal, with the command the steps give. If they
   paste a token into the chat anyway, do not repeat it, use it or store it. Tell them the chat now holds it, so it
-  should be replaced, and wait until a new one is stored.
+  has to be replaced as the steps' part "Replace a token" says, and wait until a new one is stored.
 - **The end.** The setup is done when both commands of the step "Check" pass, in this session. When one fails, say
   what the message means and go back to the step the steps name for it. Then offer the optional last step, which
   the user does by editing the file themselves, and say that a new session picks it up.

@@ -88,6 +88,19 @@ class SetupTests(TicketsTestCase):
             self.assertLessEqual(len(line), 120, f'references/setup.md line {number}')
 
 
+    def test_the_manifest_asks_for_exactly_the_five_permissions(self):
+        scopes = set()
+        in_bot = False
+        for line in read(SKILL, MANIFEST[1]).splitlines():
+            if line.strip() == 'bot:':
+                in_bot = True
+            elif in_bot and line.startswith('      - '):
+                scopes.add(line[len('      - '):].strip())
+            elif in_bot:
+                break
+        self.assertEqual(scopes, {'chat:write', 'groups:history', 'channels:history', 'users:read', 'reactions:write'})
+
+
 class SetupMessageTests(TicketsTestCase):
     def test_list_without_a_channel_still_exits_zero(self):
         code, out = run_cli(['--list'])
