@@ -3,7 +3,7 @@
 
   tickets.py batch.json            dry run: prints what would be posted, posts nothing
   tickets.py batch.json --post     posts; safe to run again, already posted tickets are skipped
-  tickets.py --list                one line per open ticket (the skill runs this first in a session)
+  tickets.py --list                one line per open ticket (loaded with the skill, or run first; never fails)
   tickets.py --answers             replies that arrived since the last check, and how many tickets are open
   tickets.py --answers --all       every ticket with every reply
   tickets.py --answers --peek      as --answers, without remembering what was shown
@@ -180,9 +180,16 @@ def history(channel, tok):
 
 
 def listing():
-    """One line per open ticket, from one call to Slack."""
-    channel, tok = channel_id(), token()
-    tickets = history(channel, tok)
+    """One line per open ticket, from one call to Slack. Claude Code loads it into the skill's text, so it never exits with an error."""
+    try:
+        channel, tok = channel_id(), token()
+        tickets = history(channel, tok)
+    except SystemExit as stop:
+        print(f'The ticket list could not be read: {stop.code}')
+        return
+    except Exception as error:  # a failing command would stop the skill from loading in Claude Code
+        print(f'The ticket list could not be read: {type(error).__name__}')
+        return
     seen = load(os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')).get('seen', {})
     still_open = [t for t in tickets if not any(r.get('name') == CLOSED for r in t.get('reactions', []))]
     print(f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:')

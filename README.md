@@ -12,9 +12,9 @@ it too.
 - When a new document from the client contradicts an earlier one, Claude proposes a ticket for each conflict.
 - A decision we make after a ticket is posted is added to that ticket's thread, so the thread stays the record.
 
-The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up. The
-first thing the skill does in a session is read the list of open tickets from Slack, so Claude knows what is already
-asked.
+The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up. Each
+time the skill loads in Claude Code it reads the list of open tickets from Slack, so Claude knows what is already
+asked. Another agent runs the same command as its first step.
 
 ## Install
 

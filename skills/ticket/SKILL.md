@@ -18,12 +18,19 @@ session is working; do not `cd` into the skill's folder.
 
 ## First: the open tickets
 
-Run `tickets.py --list` before anything else, once per session. It prints one line per open ticket: the question,
-the urgency, who asked, whether anyone but the author has replied, and the ticket's `ts`.
+`tickets.py --list` prints one line per open ticket: the question, the urgency, who asked, whether anyone but the
+author has replied and whether that is new since the last check, and the ticket's `ts`. Claude Code runs it as this
+skill loads and puts the result here:
+
+!`python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py --list`
+
+If no line above starts with `Channel` or with `The ticket list could not be read`, your agent did not run it: run
+`tickets.py --list` yourself before anything else.
 
 Use this list to answer "what is open", to spot a duplicate before drafting, and to find a ticket's `ts`. It has
-no reply texts: for those run `tickets.py --answers`. It is a snapshot; run it again when the session has posted
-or closed tickets since. If it fails, do the setup check below before anything else.
+no reply texts: for those run `tickets.py --answers`. It is a snapshot; run `tickets.py --list` again when the
+session has posted or closed tickets since. If it says the list could not be read, do the setup check below before
+anything else.
 
 ## Setup check
 
