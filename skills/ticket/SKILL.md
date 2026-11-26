@@ -1,6 +1,6 @@
 ---
 name: ticket
-description: "Ask a client a question through the project's Slack tickets channel: one message per question with nobody tagged, an urgency, our own decision and a plain-language context, details in the thread. Posts a reviewed batch and checks for replies with a script. Use when the user says 'ticket', 'ask the client', 'post it to the tickets channel', 'what is still unanswered', 'check the tickets', 'any replies', 'set up the tickets', or when work is blocked on a decision, approval or fact that only the client can give. ALSO use, without being asked, whenever a contradiction turns up: after reading a new document, brief, artifact, message or piece of feedback from the client, if it conflicts with an earlier one, with approved wording, with what is built, or with an assumption we are working on, propose a ticket for each conflict. Not for questions to our own team, and not for status updates or announcements."
+description: "Client questions through the project's Slack tickets channel: ask, check replies, set up. Use when work needs a decision or fact only the client has, or, without being asked, when something from the client contradicts what came before. Not for our own team or status updates."
 allowed-tools: Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py *)
 ---
 
