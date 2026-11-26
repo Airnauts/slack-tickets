@@ -3,7 +3,7 @@
 
   tickets.py batch.json            dry run: prints what would be posted, posts nothing
   tickets.py batch.json --post     posts; safe to run again, already posted tickets are skipped
-  tickets.py --list                one line per open ticket (the skill loads this when it starts; never fails)
+  tickets.py --list                one line per open ticket (loaded with the skill, or run first; never fails)
   tickets.py --answers             replies that arrived since the last check, and how many tickets are open
   tickets.py --answers --all       every ticket with every reply
   tickets.py --answers --peek      as --answers, without remembering what was shown
@@ -12,7 +12,7 @@
   tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
   tickets.py --check               says which channel and whose token (never prints the token)
 
-Configuration, two environment variables (the project's .claude/settings.local.json, key "env"):
+Configuration, two environment variables (in Claude Code: the project's .claude/settings.local.json, key "env"):
   SLACK_TICKETS_CHANNEL   the channel's id, for example C0123456789
   SLACK_TICKETS_TOKEN     the Slack app's bot token (xoxb-...)
 Without SLACK_TICKETS_TOKEN the token is read from the macOS Keychain, service "slack-tickets"
@@ -42,16 +42,19 @@ CLOSED = 'white_check_mark'
 def channel_id():
     value = os.environ.get('SLACK_TICKETS_CHANNEL', '').strip()
     if not re.fullmatch(r'[CG][A-Z0-9]{6,}', value):
-        sys.exit('SLACK_TICKETS_CHANNEL is not set to a channel id (like C0123456789). Put it under "env" in the '
-                 "project's .claude/settings.local.json and start a new session.")
+        sys.exit('SLACK_TICKETS_CHANNEL is not set to a channel id (like C0123456789). Set it in the environment (in '
+                 'Claude Code: under "env" in the project\'s .claude/settings.local.json, then start a new session).')
     return value
 
 
 def token():
     value = os.environ.get('SLACK_TICKETS_TOKEN', '').strip()
     if not value:
-        found = subprocess.run(['security', 'find-generic-password', '-s', KEYCHAIN, '-w'], capture_output=True, text=True)
-        value = found.stdout.strip() if found.returncode == 0 else ''
+        try:
+            found = subprocess.run(['security', 'find-generic-password', '-s', KEYCHAIN, '-w'], capture_output=True, text=True)
+            value = found.stdout.strip() if found.returncode == 0 else ''
+        except FileNotFoundError:  # no Keychain outside macOS
+            pass
     if not value:
         sys.exit('No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain under "slack-tickets". See the README.')
     return value
@@ -177,14 +180,14 @@ def history(channel, tok):
 
 
 def listing():
-    """One line per open ticket, from one call to Slack. It is loaded into the skill's text, so it never exits with an error."""
+    """One line per open ticket, from one call to Slack. Claude Code loads it into the skill's text, so it never exits with an error."""
     try:
         channel, tok = channel_id(), token()
         tickets = history(channel, tok)
     except SystemExit as stop:
         print(f'The ticket list could not be read: {stop.code}')
         return
-    except Exception as error:  # the skill's text loads this output; a crash here would stop the skill from loading
+    except Exception as error:  # a failing command would stop the skill from loading in Claude Code
         print(f'The ticket list could not be read: {type(error).__name__}')
         return
     seen = load(os.path.expanduser(f'~/.claude/slack-tickets/{channel}/state.json')).get('seen', {})
