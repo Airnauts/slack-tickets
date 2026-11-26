@@ -30,25 +30,39 @@ The plugin is loaded from this repository with `--plugin-dir`. Set `AGENT_MODEL`
 tests/agents/run-codex.sh
 ```
 
-One case, `nochannel`, as above. The skill has to be visible in the scratch project, so the script links
-`skills/ticket` into `<scratch>/.agents/skills/ticket`. Codex blocks the network in its default sandbox, which is fine
-here: the agent should stop at the missing channel and ask, and it should not run any command with a channel id in it.
+One case, `nochannel`, as above. The skill has to be visible in the scratch project, so the script copies
+`skills/ticket` into `<scratch>/.agents/skills/ticket`. It is a copy, not a link, so a write in the sandbox cannot reach
+this repository. The script passes `-c sandbox_workspace_write.network_access=false`, so the network is off by flag and
+not by your default. The agent should stop at the missing channel and ask, and it should not run any command with a
+channel id in it.
 
-## Safety rules
+## What the runs do and do not guarantee
 
-Keep these when you change a script or add a case.
+Read this before you run one. Keep it true when you change a script or add a case.
 
-- No Slack token anywhere: `SLACK_TICKETS_TOKEN` is always removed from the environment. The script falls back to the
-  macOS Keychain entry `slack-tickets`, and the agent keeps your PATH, so run these on a machine with no such entry
-  (or delete it first). Otherwise a real token is read and the dummy channel id is sent to Slack.
-- Dummy channel ids only (`C0000000000`, `C0123456789`, `C1111111111`, `C2222222222`). `summarise.py` lists any other id
-  it finds in a tool call.
-- Claude Code runs in `--permission-mode default`, with only the skill and `Write` allowed, so nothing that needs
+- No token comes from the `security` stub and the preflight, not from the agent's good behaviour. The script reads
+  `SLACK_TICKETS_TOKEN`, and when that is unset it asks the macOS Keychain through the `security` command. Each run
+  makes `<scratch>/bin/security`, a stub that refuses the lookup of the tickets token and records it, and puts
+  `<scratch>/bin` first on the PATH given to the agent. Every other call goes on to the real command, because Claude
+  Code keeps its own login in the Keychain: a stub that refused everything logged it out. Before the agent starts, the script runs `tickets.py --check --channel=C0000000000` with that PATH
+  and no token. If the output does not say `No Slack token`, the run stops. At the end it prints whether the stub was
+  used by the agent's own commands. The script cannot post without a token.
+- The skill pre-approves every `tickets.py` command in Claude Code, including `--post`, `--close` and
+  `--channel=<any id>`. So "the agent does not post through the script" is what the skill's text should make it do, not
+  something a flag enforces. What stops a post is the missing token.
+- Only `SLACK_TICKETS_TOKEN` and `SLACK_TICKETS_CHANNEL` are removed or set. The rest of the shell's environment is
+  inherited, and your user-level Claude Code settings and connectors still apply.
+- `Write` is allowed without a path limit, so a run can write outside the scratch folder. The skill may write a batch to
+  a temporary folder. Check what the run wrote if that matters to you.
+- The Slack connector's write and search tools are disallowed in every case except `post` and `setpost`. There the write
+  tools stay open on purpose, because the attempt is what the case checks. The default permission mode refuses it, and
+  the dummy channel id would make the send fail anyway. Run those two only in a session whose connector you are content
+  to see called. `nochannel` also disallows the search tools, so no real channel is looked up.
+- The denylist names the connector as `claude_ai_Slack`. If your Slack connector has another name, the list does not
+  apply to it.
+- Claude Code runs in `--permission-mode default`, with only the skill and `Write` allowed, so nothing else that needs
   approval can run.
-- The Slack connector's write and search tools are disallowed in every case that does not need to see them attempted.
-  `post` and `setpost` leave the writes open on purpose, to see whether the agent tries one. They are the only cases to
-  run in a session whose connector you are content to see called, and the dummy id makes the send fail.
-- The environment is passed as `/usr/bin/env -u SLACK_TICKETS_TOKEN <variable setting> claude ...`, so the setting
-  applies to the agent and nothing leaks from the shell.
-- Scratch projects and outputs live under `mktemp -d`. Never write into this repository, a real project or a real
-  channel.
+- The Codex run turns network access off by flag and works on a copy of the skill.
+- Dummy channel ids only (`C0000000000`, `C0123456789`, `C1111111111`, `C2222222222`). `summarise.py` lists any other
+  channel id, and any direct-message id (`D...`), that appears anywhere in the output.
+- Scratch projects and outputs live under `mktemp -d`. Never point a run at a real project or a real channel.

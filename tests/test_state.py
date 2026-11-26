@@ -9,7 +9,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from helpers import TicketsTestCase
+from helpers import TicketsTestCase, drop_git_variables
 
 EMPTY = {'names': {}, 'seen': {}}
 needs_git = unittest.skipUnless(shutil.which('git'), 'git is not installed')
@@ -107,6 +107,38 @@ class StatePathInRepositoryTests(StateTestCase):
         os.chdir(self.repo)
         self.put('{not json')
         self.assertEqual(self.tickets.recall(), EMPTY)
+
+
+@needs_git
+class InheritedGitVariablesTests(StateTestCase):
+    """git exports GIT_DIR to a hook run from a linked worktree. The tests must not act on that repository."""
+
+    def heads(self, repo):
+        found = {}
+        for folder, _, names in os.walk(os.path.join(repo, '.git', 'refs', 'heads')):
+            for name in names:
+                with open(os.path.join(folder, name), encoding='utf-8') as source:
+                    found[os.path.join(folder, name)] = source.read()
+        return found
+
+    def test_the_state_stays_out_of_a_repository_named_by_git_variables(self):
+        repo, plain = os.path.join(self.tmp, 'real-repo'), os.path.join(self.tmp, 'plain')
+        os.makedirs(repo)
+        os.makedirs(plain)
+        git('init', '-q', cwd=repo)
+        git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false',
+            'commit', '-q', '--allow-empty', '-m', 'first', cwd=repo)
+        before = self.heads(repo)
+        self.assertTrue(before)
+        os.environ['GIT_DIR'] = os.path.join(repo, '.git')
+        os.environ['GIT_WORK_TREE'] = repo
+        drop_git_variables()
+        self.assertEqual([n for n in os.environ if n.startswith('GIT_') and n != 'GIT_CEILING_DIRECTORIES'], [])
+        os.chdir(plain)
+        self.assert_path(self.tickets.state_path(), self.state_file(plain))
+        self.tickets.remember({'seen': {'1.000001': '2.000002'}, 'names': {}})
+        self.assertFalse(os.path.exists(os.path.join(repo, '.slack-tickets')))
+        self.assertEqual(self.heads(repo), before)
 
 
 class StatePathOutsideGitTests(StateTestCase):

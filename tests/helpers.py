@@ -44,16 +44,25 @@ def load_script():
 tickets = load_script()
 
 
+def drop_git_variables():
+    """Removes every inherited GIT_* variable (git exports GIT_DIR to a hook run from a linked worktree), so the
+    tests' own git commands and the script's state_path() never act on a real repository."""
+    for name in [n for n in os.environ if n.startswith('GIT_')]:
+        del os.environ[name]
+
+
 def run_cli(args, channel=None, extra_env=None, cwd=None):
-    """Runs the script as a command, with nothing on PATH and no token. Returns (exit code, output).
-    Never pass --post here: with no token the script stops before it could call Slack."""
+    """Runs the script as a command, with nothing on PATH, no token and no GIT_* variables. Returns (exit code,
+    output). Never posts: with no token the script stops before it could call Slack."""
+    assert '--post' not in args, 'command line tests never post'
     with tempfile.TemporaryDirectory(prefix='tickets-path-') as empty:
-        env = {k: v for k, v in os.environ.items() if not k.startswith('SLACK_TICKETS_')}
-        env['PATH'] = empty
+        env = {k: v for k, v in os.environ.items() if not k.startswith(('SLACK_TICKETS_', 'GIT_'))}
         if channel is not None:
             env['SLACK_TICKETS_CHANNEL'] = channel
         env.update(extra_env or {})
         env.pop('SLACK_TICKETS_TOKEN', None)
+        env = {k: v for k, v in env.items() if not k.startswith('GIT_')}
+        env['PATH'] = empty
         done = subprocess.run([sys.executable, SCRIPT, *args], env=env, cwd=cwd or empty,
                               capture_output=True, text=True, timeout=60)
     return done.returncode, done.stdout + done.stderr
@@ -103,6 +112,7 @@ class TicketsTestCase(unittest.TestCase):
         self.addCleanup(env.stop)
         os.environ.pop('SLACK_TICKETS_CHANNEL', None)
         os.environ.pop('SLACK_TICKETS_TOKEN', None)
+        drop_git_variables()
         # A scratch folder is never part of a repository that happens to hold the temporary folder.
         os.environ['GIT_CEILING_DIRECTORIES'] = os.path.dirname(self.tmp)
 

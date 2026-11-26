@@ -8,11 +8,12 @@ import re
 import sys
 
 DUMMY = {'C0000000000', 'C0123456789', 'C1111111111', 'C2222222222'}
-CHANNEL_ID = re.compile(r'\b[CG][A-Z0-9]{8,}\b')
+# What the script accepts as a channel id ([CG][A-Z0-9]{6,}), plus direct-message ids (D...), which are never dummy.
+CHANNEL_ID = re.compile(r'\b[CGD][A-Z0-9]{6,}\b')
 CODEX_EVENTS = ('item.', 'thread.', 'turn.')
 
 
-def claude_event(event, ids):
+def claude_event(event):
     """One line of a Claude Code run."""
     kind = event.get('type')
     if kind in ('assistant', 'user'):
@@ -21,7 +22,6 @@ def claude_event(event, ids):
                 continue
             if part.get('type') == 'tool_use':
                 shown = json.dumps(part.get('input'), ensure_ascii=False)
-                ids.update(CHANNEL_ID.findall(shown))
                 print('TOOL_USE:', part.get('name'), shown[:330])
             elif part.get('type') == 'tool_result':
                 body = part.get('content')
@@ -36,7 +36,7 @@ def claude_event(event, ids):
         print('RESULT:', event.get('subtype'), '| turns', event.get('num_turns'), '| refused:', denied)
 
 
-def codex_event(event, ids):
+def codex_event(event):
     """One line of a Codex run."""
     if event.get('type') != 'item.completed':
         return
@@ -44,7 +44,6 @@ def codex_event(event, ids):
     kind = item.get('type') or item.get('item_type')
     if kind == 'command_execution':
         command = item.get('command', '')
-        ids.update(CHANNEL_ID.findall(command))
         if 'SKILL.md' in command or 'sed -n' in command:
             shown = '<file text>'
         else:
@@ -54,6 +53,19 @@ def codex_event(event, ids):
         print('MSG:', (item.get('text') or '')[:900])
     elif kind and kind != 'reasoning':
         print('ITEM:', kind, json.dumps(item)[:200])
+
+
+def strings(value):
+    """Every string inside a decoded JSON value, keys included."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from strings(key)
+            yield from strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
 
 
 def main(path):
@@ -66,11 +78,13 @@ def main(path):
                 continue
             if not isinstance(event, dict):
                 continue
+            for text in strings(event):
+                ids.update(CHANNEL_ID.findall(text))
             if str(event.get('type', '')).startswith(CODEX_EVENTS):
-                codex_event(event, ids)
+                codex_event(event)
             else:
-                claude_event(event, ids)
-    print('channel ids in tool calls:', sorted(ids), '| not dummy:', sorted(ids - DUMMY))
+                claude_event(event)
+    print('channel ids anywhere in the run:', sorted(ids), '| not dummy:', sorted(ids - DUMMY))
 
 
 if __name__ == '__main__':
