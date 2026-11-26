@@ -14,6 +14,7 @@ from helpers import CHANNEL, ROOT, TicketsTestCase, run_cli
 SKILL = os.path.join(ROOT, 'skills', 'ticket')
 STEPS = ('The setup steps', 'references/setup.md')
 MANIFEST = ('The Slack app manifest', 'assets/slack-app-manifest.yaml')
+TEMPLATE = ('The register template', 'assets/sources-template.md')
 NO_TOKEN = 'No Slack token: set SLACK_TICKETS_TOKEN, or store it in the Keychain under "slack-tickets". tickets.py --setup prints the steps.'
 
 
@@ -69,6 +70,20 @@ class SetupTests(TicketsTestCase):
         self.assertIn("(Missing from the skill's folder: references/setup.md (FileNotFoundError).)", out.splitlines())
         self.assertEqual(section(out, *MANIFEST), read(SKILL, MANIFEST[1]).strip())
 
+    def test_sources_template_prints_the_file_and_needs_no_channel_or_token(self):
+        code, out = run_cli(['--sources-template'])
+        self.assertEqual(code, 0)
+        self.assertEqual(section(out, *TEMPLATE), read(SKILL, TEMPLATE[1]).strip())
+
+    def test_a_missing_template_is_said_with_exit_zero(self):
+        with tempfile.TemporaryDirectory(prefix='tickets-copy-') as scratch:
+            copy = os.path.join(scratch, 'ticket')
+            shutil.copytree(SKILL, copy, ignore=shutil.ignore_patterns('__pycache__'))
+            os.remove(os.path.join(copy, TEMPLATE[1]))
+            code, out = run_script(os.path.join(copy, 'scripts', 'tickets.py'), ['--sources-template'])
+        self.assertEqual(code, 0)
+        self.assertIn("(Missing from the skill's folder: assets/sources-template.md (FileNotFoundError).)", out.splitlines())
+
     def test_a_symlinked_skill_folder_finds_its_files(self):
         with tempfile.TemporaryDirectory(prefix='tickets-link-') as scratch:
             link = os.path.join(scratch, 'ticket')
@@ -105,6 +120,28 @@ class SkillFileTests(unittest.TestCase):
     def test_the_load_time_command_appears_once(self):
         pair = chr(33) + chr(96)
         self.assertEqual(read(SKILL, 'SKILL.md').count(pair), 1)
+
+    def test_only_the_reading_commands_are_pre_approved(self):
+        text = read(SKILL, 'SKILL.md')
+        head, body = text.split('\n---\n', 1)
+        rules = []
+        listing = False
+        for line in head.splitlines():
+            if line.startswith('allowed-tools:'):
+                listing = True
+            elif listing and line.startswith('  - '):
+                rules.append(line[len('  - '):].strip())
+            elif listing:
+                break
+        prefix = 'Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py '
+        self.assertTrue(rules)
+        self.assertFalse([rule for rule in rules if '*' in rule])
+        self.assertTrue(all(rule.startswith(prefix) and rule.endswith(')') for rule in rules))
+        self.assertEqual({rule[len(prefix):-1] for rule in rules},
+                         {'--list', '--answers', '--answers --all', '--answers --peek', '--check', '--setup', '--sources-template'})
+        loaded = re.search(r'^' + re.escape(chr(33) + chr(96)) + r'(.*)' + chr(96) + r'$', body, re.M)
+        self.assertIsNotNone(loaded)
+        self.assertIn(f'Bash({loaded.group(1)})', rules)
 
     def test_the_description_is_under_1024_characters(self):
         text = read(SKILL, 'SKILL.md')

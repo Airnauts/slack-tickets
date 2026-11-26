@@ -20,7 +20,8 @@ asks you for it and never stores it for you: you store it yourself, in your own 
 Pick the Slack channel the tickets go to. Its id is at the bottom of the channel's "About" panel in Slack (click the
 channel's name at the top). It starts with C or G, like C0123456789. Give the id to the agent: it uses it for this
 session with `--channel=<id>`. If the project already has `SLACK_TICKETS_CHANNEL` set, skip this step and leave
-`--channel=<id>` out of every command below.
+`--channel=<id>` out of every command below. In Claude Code every command with `--channel=<id>` asks for your go, each
+time. Step 7 ends that.
 
 ## 2. What is missing
 

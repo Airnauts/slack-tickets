@@ -12,6 +12,7 @@
   tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
   tickets.py --check               says which channel and whose token (never prints the token)
   tickets.py --setup               prints the setup steps and the Slack app manifest (needs nothing, calls nobody)
+  tickets.py --sources-template    prints the template for the register of client documents
   tickets.py ... --channel=<id>    with any command: the channel for this run, when the project has none set
 
 Configuration, two environment variables (in Claude Code: the project's .claude/settings.local.json, key "env"):
@@ -75,19 +76,24 @@ def token():
     return value
 
 
+def show_file(title, name):
+    """Prints one file of the skill's folder between a header and an end line. Never raises: a missing file is said."""
+    try:
+        with open(os.path.join(SKILL_DIR, name), encoding='utf-8') as source:
+            text = source.read().strip()
+    except Exception as error:  # missing, unreadable or not UTF-8
+        text = f"(Missing from the skill's folder: {name} ({type(error).__name__}).)"
+    try:
+        print(f'===== {title}: {name} =====\n{text}\n===== End of {name} =====\n')
+    except Exception:  # a terminal that cannot show a character; the files are ASCII, so only a damaged copy
+        pass
+
+
 def setup():
     """The setup steps and the Slack app manifest, from the skill's own folder, for an agent to lead someone through.
-    Reads no token, checks no channel, calls nobody, and never raises: a missing file is said, not an error."""
+    Reads no token, checks no channel, calls nobody."""
     for title, name in SETUP_FILES:
-        try:
-            with open(os.path.join(SKILL_DIR, name), encoding='utf-8') as source:
-                text = source.read().strip()
-        except Exception as error:  # missing, unreadable or not UTF-8
-            text = f"(Missing from the skill's folder: {name} ({type(error).__name__}).)"
-        try:
-            print(f'===== {title}: {name} =====\n{text}\n===== End of {name} =====\n')
-        except Exception:  # a terminal that cannot show a character; both files are ASCII, so only a damaged copy
-            pass
+        show_file(title, name)
 
 
 def call(method, tok, read=False, **payload):
@@ -377,6 +383,8 @@ def main():
     flags = {a for a in sys.argv[1:] if a.startswith('--')}
     if '--setup' in flags:
         setup()
+    elif '--sources-template' in flags:
+        show_file('The register template', 'assets/sources-template.md')
     elif '--check' in flags:
         print(f'Channel {channel_id()}.')
         who = call('auth.test', token())
