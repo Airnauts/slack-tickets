@@ -119,23 +119,46 @@ def state_path():
     return os.path.join(root, '.slack-tickets', 'state.json')
 
 
-def recall():
-    """What --answers remembered. A missing, unreadable or broken file counts as nothing remembered."""
+def linked(path):
+    """True when the state file or its folder is a link, which could send a read or a write outside the project."""
+    return os.path.islink(path) or os.path.islink(os.path.dirname(path))
+
+
+def believable(last):
+    """A reply's timestamp that can be true: a number, and not in the future (a day's slack for a clock that is off)."""
     try:
-        return load(state_path())
-    except (OSError, ValueError):
-        return {}
+        return 0 < float(last) <= time.time() + 86400
+    except (TypeError, ValueError):
+        return False
+
+
+def recall():
+    """What --answers remembered, read as something a stranger could have put in the project.
+    A missing, unreadable, linked or oddly shaped file counts as nothing remembered. Never raises."""
+    path = state_path()
+    try:
+        state = {} if linked(path) else load(path)
+        seen = {ts: last for ts, last in state.get('seen', {}).items() if believable(last)}
+        names = {user: ' '.join(str(name).split()) for user, name in state.get('names', {}).items()}
+    except (OSError, ValueError, AttributeError):
+        seen, names = {}, {}
+    return {'names': names, 'seen': seen}
 
 
 def remember(state):
     """Saves what was shown. A folder that cannot be written costs a repeat next time, not the answers just printed."""
     path = state_path()
+    folder = os.path.dirname(path)
     try:
-        save(path, state)
-        ignore = os.path.join(os.path.dirname(path), '.gitignore')
-        if not os.path.exists(ignore):
-            with open(ignore, 'w', encoding='utf-8') as out:
+        if linked(path):
+            raise OSError(0, 'a link stands in its place')
+        os.makedirs(folder, exist_ok=True)
+        try:  # before the state, so the state is never in the project without it; 'x' does not follow a link
+            with open(os.path.join(folder, '.gitignore'), 'x', encoding='utf-8') as out:
                 out.write('*\n')
+        except FileExistsError:
+            pass
+        save(path, state)
     except OSError as error:
         print(f'What was shown could not be remembered ({path}: {error.strerror}). The same replies will show as new next time.')
 
