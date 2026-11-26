@@ -247,7 +247,7 @@ def listing():
     except Exception as error:  # a failing command would stop the skill from loading in Claude Code
         print(f'The ticket list could not be read: {type(error).__name__}')
         return
-    seen = recall().get('seen', {})
+    seen = recall()['seen']
     still_open = [t for t in tickets if not any(r.get('name') == CLOSED for r in t.get('reactions', []))]
     print(f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:')
     for t in still_open:
