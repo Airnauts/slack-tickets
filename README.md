@@ -79,6 +79,10 @@ A ticket is a top-level message that starts with `*Q:` and has an `Urgency:` or 
 Older tickets have a plain `Urgency:` line and no "Asked by", and still count. A message that only starts like a ticket
 is left out, and `--list` and `--answers` say how many there were.
 
+A ticket is closed by a check mark from its author or from the app's own token. Anyone else's check mark, a client's
+"seen" for example, leaves it open. A ticket the app posted and a person closed by hand from their own account shows as
+open again; `tickets.py --close <ts>` settles it.
+
 ## The script
 
 Claude runs it for you. By hand, with the two variables set (`--setup` needs neither):

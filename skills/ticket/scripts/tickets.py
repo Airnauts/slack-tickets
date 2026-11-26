@@ -425,7 +425,8 @@ def list_lines():
     messages = history(channel, tok)
     tickets = [m for m in messages if is_ticket(m)]
     seen = recall()['seen']
-    still_open = [t for t in tickets if not any(r.get('name') == CLOSED for r in t.get('reactions', []))]
+    is_closed = closer(tok)
+    still_open = [t for t in tickets if not is_closed(t)]
     lines = [f'Channel {channel}: {len(still_open)} open, {len(tickets) - len(still_open)} closed. Open tickets, oldest first:']
     return lines + [ticket_line(t, seen) for t in still_open] + lookalikes(messages)
 
@@ -477,6 +478,30 @@ def same_author(one, other):
     return any(one.get(key) and one.get(key) == other.get(key) for key in ('user', 'bot_id'))
 
 
+def identity(tok):
+    """The token's own user and bot ids, or none when Slack does not say, so that a check mark then reads as open."""
+    try:
+        who = call('auth.test', tok)
+        return {who.get('user_id'), who.get('bot_id')} - {None, ''}
+    except (SystemExit, Exception):  # call() fails through sys.exit; --list must not fail over it, and a miss leaves a ticket open
+        return set()
+
+
+def closer(tok):
+    """A test for a closed ticket: a check mark from its author or from this token, whose ids are asked for once and
+    only when a check mark comes from someone else."""
+    me = []
+
+    def is_closed(ticket):
+        users = {u for r in ticket.get('reactions') or [] if r.get('name') == CLOSED for u in r.get('users') or []}
+        if not users or ticket.get('user') in users:
+            return bool(users)
+        if not me:
+            me.append(identity(tok))
+        return bool(users & me[0])
+    return is_closed
+
+
 def close(ts):
     if not TIMESTAMP(ts):
         sys.exit('Not closed: the argument is the ticket\'s timestamp, as printed by --answers (like 1700000000.000100).')
@@ -484,10 +509,16 @@ def close(ts):
     ticket = ticket_at(ts, tok, channel)
     if not ticket:
         sys.exit('Not closed: that timestamp is not a ticket in this channel.')
-    if any(r.get('name') == CLOSED for r in ticket.get('reactions', [])):
+    if closer(tok)(ticket):
         print(f'Already closed {ts}.')
         return
-    call('reactions.add', tok, channel=channel, timestamp=ts, name=CLOSED)
+    try:
+        call('reactions.add', tok, channel=channel, timestamp=ts, name=CLOSED)
+    except SystemExit as stop:
+        if stop.code != 'reactions.add: already_reacted':
+            raise
+        print(f'Already closed {ts}.')
+        return
     print(f'Closed {ts}.')
 
 
@@ -512,11 +543,12 @@ def answers(flags):
 
     messages = history(channel, tok)
     tickets = [m for m in messages if is_ticket(m)]
+    is_closed = closer(tok)
 
     show_all = '--all' in flags
     open_count, shown = 0, 0
     for ticket in tickets:
-        closed = any(r.get('name') == CLOSED for r in ticket.get('reactions', []))
+        closed = is_closed(ticket)
         open_count += 0 if closed else 1
         last_seen = '0' if show_all else seen.get(ticket['ts'], '0')
         latest = ticket.get('latest_reply', '0')

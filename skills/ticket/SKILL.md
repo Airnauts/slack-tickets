@@ -123,8 +123,9 @@ When the project has none set, it is only the one the user named. Never another 
 Before the first send, say once that there is no token, so the tickets will go out under the user's own name.
 
 - **The list.** Read the channel with the connector. A ticket is a top-level message that starts with `Q:`, with or
-  without asterisks around it, and has an `Urgency:` or an `Asked by:` field. One with a ✅ reaction is closed. A
-  ticket's replies are in its thread. Nothing remembers what was shown, so report what is there, not what is new.
+  without asterisks around it, and has an `Urgency:` or an `Asked by:` field. One with a ✅ from its author or from the
+  Tickets app is closed; a ✅ from anyone else leaves it open. A ticket's replies are in its thread. Nothing
+  remembers what was shown, so report what is there, not what is new.
 - **The text.** Write the batch as usual and run the dry run, `tickets.py <batch.json>`: it needs no token, and it
   applies the script's checks. Show that to the user. The connector takes Markdown, not Slack mrkdwn, so send the
   same words with only the marks changed: bold is `**two asterisks**`, a link is `[words](address)`, a bullet starts
@@ -137,8 +138,9 @@ Before the first send, say once that there is no token, so the tickets will go o
   says so. Read the channel to find it and its timestamp, create the Details as a draft reply in that thread, and
   stop again. Only then the next ticket. If the connector says a draft already exists (`attached_draft_exists`), ask
   the user to send or delete that one first. If drafts are refused too, give the user both texts to paste.
-- **Closing and our own replies.** Close a ticket by adding the `white_check_mark` reaction with the connector. A
-  reply of ours in a thread is sent, or drafted, the same way as the Details.
+- **Closing and our own replies.** Close a ticket by adding the `white_check_mark` reaction with the connector. That
+  check mark is the user's own, so it closes the tickets they posted; one the app posted needs
+  `tickets.py --close <ts>`. A reply of ours in a thread is sent, or drafted, the same way as the Details.
 
 ## Where a project's data lives
 
@@ -287,6 +289,10 @@ Post the most urgent first. Tickets appear under the Slack app's name, which is 
 - `tickets.py --answers --all`: every ticket with every reply.
 - `tickets.py --answers --peek`: as `--answers`, without remembering what was shown.
 - `tickets.py --close <ts>`: the check mark on a ticket whose answer is recorded (the `ts` is printed beside each).
+
+A ticket is closed by a check mark from its author or from the app, which is what `--close` adds. A check mark from
+anyone else, for example a client marking a ticket as seen, leaves it open. So a ticket the app posted and a person
+closed by hand from their own account shows as open again: close it with `tickets.py --close <ts>`.
 
 It skips each ticket's own Details reply and shows names. Then:
 

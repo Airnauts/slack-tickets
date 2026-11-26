@@ -16,6 +16,7 @@ T2 = '1700001000.000100'
 T3 = '1700002000.000100'
 
 TOP = '*Q: {question}*\n*Urgency:* :red_circle: Blocking · *Asked by:* {by}\n*Context:* Why it matters.'
+CLOSED_BY_US = [{'name': 'white_check_mark', 'users': [BOT], 'count': 1}]
 OLD_TOP = '*Q: {question}*\nUrgency: 🔴 Blocking\nOur decision: We will ship.\nContext: Why it matters.'
 
 
@@ -59,7 +60,7 @@ class ListingTests(SlackTestCase):
         return lines_of(result.out)
 
     def test_the_header_counts_open_and_closed_tickets(self):
-        self.history(ticket(T1), ticket(T2, reactions=[{'name': 'white_check_mark', 'count': 1}]), ticket(T3))
+        self.history(ticket(T1), ticket(T2, reactions=CLOSED_BY_US), ticket(T3))
         header = self.listed()[0]
         self.assertTrue(header.startswith(f'Channel {CHANNEL}: 2 open, 1 closed.'), header)
 
@@ -104,12 +105,47 @@ class ListingTests(SlackTestCase):
         self.assertIn('NEW since the last check', self.listed()[1])
 
     def test_a_closed_ticket_is_not_listed(self):
-        self.history(ticket(T1, top('Is this closed?'), reactions=[{'name': 'white_check_mark', 'count': 1}]),
+        self.history(ticket(T1, top('Is this closed?'), reactions=CLOSED_BY_US),
                      ticket(T2, top('Is this open?')))
         lines = self.listed()
         self.assertEqual(len(lines), 2)
         self.assertIn('Is this open?', lines[1])
         self.assertNotIn('Is this closed?', '\n'.join(lines))
+
+    def test_a_check_mark_from_someone_else_leaves_a_ticket_open(self):
+        self.history(ticket(T1, reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]))
+        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        lines = self.listed()
+        self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
+        self.assertIn('Can we ship on Friday?', lines[1])
+        self.assertEqual(len(self.slack.made('auth.test')), 1)
+
+    def test_the_authors_check_mark_costs_no_extra_call(self):
+        self.history(ticket(T1, reactions=CLOSED_BY_US))
+        self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 0 open'))
+        self.assertEqual(self.slack.methods(), ['conversations.history'])
+
+    def test_our_check_mark_on_tickets_without_a_user_is_looked_up_once(self):
+        self.history(ticket(T1, user=None, bot_id='B0000000001', reactions=CLOSED_BY_US),
+                     ticket(T2, user=None, bot_id='B0000000001', reactions=CLOSED_BY_US))
+        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 0 open'))
+        self.assertEqual(len(self.slack.made('auth.test')), 1)
+
+    def test_a_failed_lookup_leaves_the_ticket_open_and_the_list_readable(self):
+        self.history(ticket(T1, reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]))
+
+        def refuse(**payload):
+            raise SystemExit('auth.test: invalid_auth')
+        self.slack.respond('auth.test', refuse)
+        lines = self.listed()
+        self.assertTrue(lines[0].startswith(f'Channel {CHANNEL}: 1 open'), lines[0])
+        self.assertIn('Can we ship on Friday?', lines[1])
+
+    def test_a_check_mark_without_its_users_reads_open_without_a_call(self):
+        self.history(ticket(T1, reactions=[{'name': 'white_check_mark', 'count': 1}]))
+        self.assertTrue(self.listed()[0].startswith(f'Channel {CHANNEL}: 1 open'))
+        self.assertEqual(self.slack.methods(), ['conversations.history'])
 
     def test_other_reactions_do_not_close_a_ticket(self):
         self.history(ticket(T1, reactions=[{'name': 'eyes', 'count': 1}]))
@@ -203,7 +239,7 @@ class AnswersTests(SlackTestCase):
         self.latest = '1700000300.000100'
         self.history(
             ticket(T1, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest),
-            ticket(T2, top('Is the old one closed?', 'Kim'), reactions=[{'name': 'white_check_mark', 'count': 1}]))
+            ticket(T2, top('Is the old one closed?', 'Kim'), reactions=CLOSED_BY_US))
         self.thread = [
             ticket(T1),
             {'ts': '1700000100.000100', 'user': BOT, 'text': '*Details*\nWhat led to this.'},
@@ -317,6 +353,15 @@ class AnswersTests(SlackTestCase):
 
     def test_the_last_line_counts_tickets_and_open_ones(self):
         self.assertEqual(lines_of(self.answers())[-1], '2 tickets, 1 open.')
+
+    def test_all_marks_a_ticket_with_a_strangers_check_mark_open(self):
+        self.history(
+            ticket(T1, reply_count=3, reply_users=[BOT, ANN, BEN], latest_reply=self.latest),
+            ticket(T2, top('Is the old one closed?', 'Kim'), reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]))
+        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        out = self.answers('--all')
+        self.assertIn('[open] Q: Is the old one closed?', out)
+        self.assertNotIn('[closed]', out)
 
     def test_a_closed_ticket_without_replies_is_not_shown(self):
         self.assertNotIn('Is the old one closed?', self.answers())
@@ -628,11 +673,32 @@ class MainTests(SlackTestCase):
 
     def test_close_adds_nothing_to_a_ticket_that_is_already_closed(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [
-            ticket(T1, reactions=[{'name': 'white_check_mark', 'count': 1}])]})
+            ticket(T1, reactions=CLOSED_BY_US)]})
         result = self.run_main('--close', T1)
         self.assertIsNone(result.code)
         self.assertEqual(result.out, f'Already closed {T1}.\n')
         self.assertEqual(self.slack.methods(), ['conversations.replies'])
+
+    def test_close_adds_ours_over_someone_elses_check_mark(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [
+            ticket(T1, reactions=[{'name': 'white_check_mark', 'users': [ANN], 'count': 1}])]})
+        self.slack.respond('auth.test', {'ok': True, 'user_id': BOT, 'bot_id': 'B0000000001'})
+        self.slack.respond('reactions.add', {'ok': True})
+        result = self.run_main('--close', T1)
+        self.assertIsNone(result.code)
+        self.assertEqual(result.out, f'Closed {T1}.\n')
+        self.assertEqual(self.slack.methods(), ['conversations.replies', 'auth.test', 'reactions.add'])
+
+    def test_close_reads_already_reacted_as_closed(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [
+            ticket(T1, reactions=[{'name': 'white_check_mark', 'count': 1}])]})
+
+        def refuse(**payload):
+            raise SystemExit('reactions.add: already_reacted')
+        self.slack.respond('reactions.add', refuse)
+        result = self.run_main('--close', T1)
+        self.assertIsNone(result.code)
+        self.assertEqual(result.out, f'Already closed {T1}.\n')
 
     def test_close_refuses_a_malformed_timestamp_before_any_call(self):
         for ts in ('123', '1700000000', 'abc.def', '1700000000.000100x'):
