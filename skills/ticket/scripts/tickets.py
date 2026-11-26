@@ -11,6 +11,7 @@
   tickets.py --reply <ts> note.txt --post  posts it
   tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
   tickets.py --check               says which channel and whose token (never prints the token)
+  tickets.py ... --channel=<id>    with any command: the channel for this run, when the project has none set
 
 Configuration, two environment variables (in Claude Code: the project's .claude/settings.local.json, key "env"):
   SLACK_TICKETS_CHANNEL   the channel's id, for example C0123456789
@@ -40,11 +41,16 @@ CLOSED = 'white_check_mark'
 
 
 def channel_id():
+    """The project's channel, or the one named with --channel=<id> when the project has none."""
     value = os.environ.get('SLACK_TICKETS_CHANNEL', '').strip()
-    if not re.fullmatch(r'[CG][A-Z0-9]{6,}', value):
+    named = next((a.split('=', 1)[1] for a in sys.argv[1:] if a.startswith('--channel=')), '')
+    if value and named and named != value:
+        sys.exit(f"This project's channel is {value}. --channel is only for a project without one.")
+    if not re.fullmatch(r'[CG][A-Z0-9]{6,}', value or named):
         sys.exit('SLACK_TICKETS_CHANNEL is not set to a channel id (like C0123456789). Set it in the environment (in '
-                 'Claude Code: under "env" in the project\'s .claude/settings.local.json, then start a new session).')
-    return value
+                 'Claude Code: under "env" in the project\'s .claude/settings.local.json, then start a new session), '
+                 'or name the channel for one run with --channel=<id>.')
+    return value or named
 
 
 def token():

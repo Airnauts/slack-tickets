@@ -75,6 +75,20 @@ the Keychain. Keep the token out of your shell profile.
 Start a new Claude Code session and ask "check the tickets setup". Claude runs the check and says which channel and
 which app it will post as.
 
+## Without the channel id or the token
+
+The skill still works with less set up, for a question or two:
+
+- **No channel id.** Claude asks which channel the tickets go to, once per session, and passes it to the script with
+  `--channel=<id>`. It never picks a channel itself. The flag only works in a project that has no channel set.
+- **No token.** With a Slack connector in the session, Claude reads and posts through it, under your own name and one
+  message at a time. In a channel shared with another organization the connector cannot send, so Claude creates one
+  draft at a time and you send each from "Drafts & Sent" in Slack.
+- **Neither a token nor a connector.** Claude says what is missing and stops.
+
+For more than a couple of tickets, set the token up: the script posts a whole reviewed batch in one run and remembers
+which replies it has shown.
+
 ## The register of client documents (optional)
 
 A project with many client documents can keep a register of them, so Claude compares new material against the current
@@ -95,6 +109,7 @@ python3 skills/ticket/scripts/tickets.py --answers             new replies since
 python3 skills/ticket/scripts/tickets.py --answers --all       every ticket with every reply
 python3 skills/ticket/scripts/tickets.py --reply <ts> note.txt our own update in a ticket's thread (dry run; add --post)
 python3 skills/ticket/scripts/tickets.py --close <ts>          mark a ticket closed
+python3 skills/ticket/scripts/tickets.py --list --channel=C0123456789   a channel for one run, when none is set
 ```
 
 It needs Python 3 and nothing else. It remembers which replies it has shown in `.slack-tickets/state.json` in the
