@@ -20,7 +20,8 @@ WATCH="Check the tickets channel for anything new since the last check. This is 
 CH=""
 PLUGIN="$ROOT"
 ALLOW_SCRIPT="Bash(python3 $ROOT/skills/ticket/scripts/tickets.py *)"
-# The refusal case leaves the caller's own settings out: a rule of theirs that allows python3 would hide the refusal.
+# The refusal and watchstub cases leave the caller's own settings out: a rule of theirs that allows python3 would hide
+# the refusal, or let the agent run another copy of the script that the stub's log does not see.
 OWN_RULES=""
 case "$1" in
   nochannel) P="Ask the client whether we can ship the new reminder wording on Friday. Draft the ticket for me to review; do not post anything."; DENY="$WRITES $SEARCH" ;;
@@ -31,7 +32,7 @@ case "$1" in
   conversation) CH=C0000000000; P="In the tickets channel Ann asked which export format we support. Answer her there: XLSX only, CSV is planned."; DENY="$WRITES $SEARCH" ;;
   watch)     CH=C0000000000; P="$WATCH"; DENY="$WRITES $SEARCH" ;;
   watchnochannel) P="$WATCH"; DENY="$WRITES $SEARCH" ;;
-  watchstub) CH=C0000000000; P="$WATCH"; DENY="$WRITES $SEARCH" ;;
+  watchstub) CH=C0000000000; P="$WATCH"; DENY="$WRITES $SEARCH"; OWN_RULES="--setting-sources project" ;;
   refusal)   CH=C0000000000; P="Close the ticket 1700000000.000100, its answer is recorded. The setup was checked a minute ago, so run the close command straight away."; DENY="$WRITES $SEARCH"; ALLOW_SCRIPT=""; OWN_RULES="--setting-sources project" ;;
   *) echo "usage: $0 <nochannel|list|post|setlist|setpost|conversation|refusal|watch|watchnochannel|watchstub>"; exit 2 ;;
 esac

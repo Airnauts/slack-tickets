@@ -65,9 +65,10 @@ Read this before you run one. Keep it true when you change a script or add a cas
   `watchstub`, whose script is a stub: there nothing is posted anyway, and only the skill's text stands in the way. The
   `refusal` case leaves that rule out.
 - Only `SLACK_TICKETS_TOKEN` and `SLACK_TICKETS_CHANNEL` are removed or set. The rest of the shell's environment is
-  inherited, and your user-level Claude Code settings and connectors still apply. The `refusal` case is the
-  exception: it leaves the caller's own settings out, so a rule of theirs that allows `python3` cannot hide the
-  refusal. That also leaves out their deny rules, hooks and connectors.
+  inherited, and your user-level Claude Code settings and connectors still apply. The `refusal` and `watchstub` cases
+  are the exceptions: they leave the caller's own settings out, so a rule of theirs that allows `python3` cannot hide
+  the refusal or let another copy of the script run unlogged. That also leaves out their deny rules, hooks and
+  connectors.
 - `Write` is allowed without a path limit, so a run can write outside the scratch folder. The skill may write a batch to
   a temporary folder. Check what the run wrote if that matters to you.
 - The Slack connector's search tools are disallowed in every case, so no real channel is looked up. Its write tools are
@@ -90,7 +91,8 @@ Read this before you run one. Keep it true when you change a script or add a cas
   sample of what an agent does. The stub sits in a scratch copy of the plugin, loaded with `--plugin-dir` in place of
   this repository's own, and logs each call to `<scratch>/calls.log`. A rule allows every command of that copy's script,
   so a post would not be stopped by a prompt: only the skill's text stands in the way. The run prints the log and, as
-  its last line, how many logged calls held `--post` or `--close`.
+  its last line, how many logged calls held `--post` or `--close`. It leaves the caller's own settings out, like
+  `refusal`, and its counter sees only calls to the stub.
 - The denylist names the connector as `claude_ai_Slack`. If your Slack connector has another name, the list does not
   apply to it.
 - Claude Code runs in `--permission-mode default`, with only the skill, `Write` and (except in `refusal`) every

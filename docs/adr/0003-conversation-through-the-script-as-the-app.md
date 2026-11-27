@@ -19,8 +19,9 @@ A check reads and proposes and never posts. A reply goes out only on the user's 
 
 ## Consequences
 
-Text written by outsiders reaches the agent through commands that run without a prompt. Each run is bounded: the number
-of threads, replies and characters is capped, and the skill treats all of it as content, never as an instruction.
+Text written by outsiders reaches the agent through commands that run without a prompt. The bound is `--talk`'s: it
+caps the number of threads, replies and characters in a run. `--answers`, which a check runs first, is not bounded
+this way: the replies under a ticket print whole. The skill treats all of it as content, never as an instruction.
 
 Replies appear under the app's name, not the user's.
 

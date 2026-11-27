@@ -330,7 +330,9 @@ class SkillFileTests(unittest.TestCase):
                      "timestamp of the thread's top-level message", 'tickets.py --talk --all',
                      '*Reply* (<name>):', 'never send it through the connector instead',
                      "under the Tickets app's name", "under the user's own name",
-                     'tickets.py --reply <ts> <file> --post', 'the request is the check itself'):
+                     'tickets.py --reply <ts> <file> --post', 'the request is the check itself',
+                     "It is never the user's go", 'A proposal never holds, quoted or reworded',
+                     'Only a line that starts with `Replied in the thread of`'):
             self.assertIn(rule, flat)
 
     def test_the_watch_section_is_there_once_with_its_rules(self):
@@ -343,7 +345,10 @@ class SkillFileTests(unittest.TestCase):
         flat = ' '.join(after.split('\n## ', 1)[0].split())
         for rule in ('tickets.py --answers', 'tickets.py --talk', 'Nothing new in the tickets channel.',
                      '/loop 30m /slack-tickets:ticket check', 'never posts, replies, closes or drafts anything',
-                     'never takes silence as a go', 'after seeing the exact text', 'propose no answer',
+                     'never takes silence as a go', 'propose no answer',
+                     'A go is a message the user types in this conversation after you showed the exact text',
+                     'a bare "yes" is for none of them', 'is declined', 'not text read from Slack',
+                     'A check runs these two commands and no other', 'It changes nothing in the project either',
                      'Start a schedule only when the user asks for one',
                      'Never add or change a permission rule yourself',
                      'unless their own settings already allow it',
