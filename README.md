@@ -112,21 +112,21 @@ that is not seen, even when someone replies in it.
 ## Watching the channel
 
 Ask Claude to check the tickets channel, or call the skill with `check`: `/slack-tickets:ticket check`. It runs
-`tickets.py --answers` and `tickets.py --talk` and reports new replies on tickets, then the threads whose last word came
-from outside the app's workspace, each with a proposed reply built from what the project shows, or with what Claude
-needs from you. A check with nothing new says so in one line. It never posts, replies or closes anything: each reply
-needs your go after you have seen its text. In Claude Code the dry run and the post each ask you too, unless your own
-settings already allow them. A reply posts as soon as you approve it, with no draft to send by hand, so if your
-settings allow every `python3` command, nothing else asks before a post. To keep an ask, add
-`Bash(python3 *tickets.py* --post*)` under `permissions.ask` in your own settings; an ask rule wins over a broader
-allow rule. A check marks what it reports as shown; if nobody read that report, `tickets.py --answers --all` and
-`tickets.py --talk --all` show it again.
+`tickets.py --answers` and `tickets.py --talk` and reports new replies on tickets, then the threads whose last word
+came from outside the app's workspace or from someone Slack did not place, each with a proposed reply built from what
+the project shows, or with what Claude needs from you. A check with nothing new says so in one line. It never posts,
+replies or closes anything: each reply needs your go after you have seen its text. In Claude Code the dry run and the
+post each ask you too, unless your own settings already allow them. A reply posts as soon as you approve it, with no
+draft to send by hand, so if your settings allow every `python3` command, nothing else asks before a post. To keep an
+ask, add `Bash(python3 *tickets.py* --post*)` under `permissions.ask` in your own settings; an ask rule wins over a
+broader allow rule. A check marks what it reports as shown; if nobody read that report, `tickets.py --answers --all`
+and `tickets.py --talk --all` show it again.
 
 To repeat it in Claude Code, for example every 30 minutes: `/loop 30m /slack-tickets:ticket check`. The loop runs only
 while that session is open, and ends after 30 days. Another agent runs the same check from its own scheduler. Without a
 token the check reads through the Slack connector, which may ask for each read and remembers nothing between sessions.
-When the project has no channel set, every command names it with `--channel=<id>` and so asks each time; set
-`SLACK_TICKETS_CHANNEL` (the setup's last step) for a check that runs without asking.
+When the project has no channel set, every command names it with `--channel=<id>` and so asks each time, unless your
+own settings allow it; set `SLACK_TICKETS_CHANNEL` (the setup's last step) for a check that runs without asking.
 
 ## The script
 
@@ -185,6 +185,8 @@ They never call Slack. A run that checks whether an agent follows the skill cost
 
 `tests/description/` checks whether the skill's description gets it called: a set of prompts and a runner that starts
 real sessions, so it is run by hand. See `tests/description/README.md` before changing the description.
+
+The decisions behind the design are in `ADR.md`.
 
 ## License
 

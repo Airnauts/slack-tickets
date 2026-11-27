@@ -354,7 +354,8 @@ class SkillFileTests(unittest.TestCase):
         text = read(SKILL, 'SKILL.md')
         source = read(os.path.join(ROOT, 'skills', 'ticket', 'scripts'), 'tickets.py')
         for line in ('No new replies.', 'No new conversation.', 'may answer the ticket',
-                     'Shown before, last word still outside or unknown:'):
+                     'Shown before, last word still outside or unknown:', '(through an app)', 'new, not shown:', 'Not read yet:',
+                     'Older than two weeks now, last word still outside or unknown:'):
             self.assertIn(line, text)
             self.assertIn(line, source)
         self.assertIn('[last word {side}]', source)
