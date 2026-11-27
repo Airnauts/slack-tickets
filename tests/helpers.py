@@ -24,6 +24,9 @@ SCRIPT = os.path.join(ROOT, 'skills', 'ticket', 'scripts', 'tickets.py')
 CHANNEL = 'C0000000000'
 OTHER_CHANNEL = 'C1111111111'
 THIRD_CHANNEL = 'C2222222222'
+ARABIC_INDIC_TS = '\u0661\u0667\u0660\u0660\u0660\u0660\u0660\u0660\u0660\u0660.\u0660\u0660\u0660\u0661\u0660\u0660'
+
+PLEASE = "_Please answer in this message's thread, so the answer stays with the question._"
 
 Call = namedtuple('Call', 'method tok read payload')
 Result = namedtuple('Result', 'code out')
@@ -54,6 +57,11 @@ def clean_git_environment(ceiling):
     os.environ['GIT_CEILING_DIRECTORIES'] = ceiling
     os.environ['GIT_CONFIG_GLOBAL'] = os.devnull
     os.environ['GIT_CONFIG_NOSYSTEM'] = '1'
+    # GIT_CONFIG_GLOBAL does not turn off git's default global ignore file, so name an empty one.
+    os.environ['XDG_CONFIG_HOME'] = os.path.join(ceiling, 'xdg-config')
+    os.environ['GIT_CONFIG_COUNT'] = '1'
+    os.environ['GIT_CONFIG_KEY_0'] = 'core.excludesFile'
+    os.environ['GIT_CONFIG_VALUE_0'] = os.devnull
 
 
 def run_cli(args, channel=None):
@@ -97,6 +105,22 @@ class FakeSlack:
 
     def methods(self):
         return [c.method for c in self.calls]
+
+
+class FakeChannel:
+    """conversations.history over a list of top-level messages: newest first, limit at a time, after oldest
+    (and at it only with inclusive), with a cursor."""
+    def __init__(self, messages):
+        self.messages = messages
+
+    def __call__(self, limit, cursor=None, oldest=None, inclusive=None, **payload):
+        kept = sorted((m for m in self.messages
+                       if not oldest or float(m['ts']) > float(oldest) or (inclusive == 'true' and m['ts'] == oldest)),
+                      key=lambda m: -float(m['ts']))
+        start = int(cursor or 0)
+        more = start + limit < len(kept)
+        return {'ok': True, 'messages': kept[start:start + limit],
+                'response_metadata': {'next_cursor': str(start + limit) if more else ''}}
 
 
 class TicketsTestCase(unittest.TestCase):

@@ -20,7 +20,9 @@ asks you for it and never stores it for you: you store it yourself, in your own 
 Pick the Slack channel the tickets go to. Its id is at the bottom of the channel's "About" panel in Slack (click the
 channel's name at the top). It starts with C or G, like C0123456789. Give the id to the agent: it uses it for this
 session with `--channel=<id>`. If the project already has `SLACK_TICKETS_CHANNEL` set, skip this step and leave
-`--channel=<id>` out of every command below.
+`--channel=<id>` out of every command below. In Claude Code every command with `--channel=<id>` asks for your go, each
+time. Answer yes each time, not "don't ask again": that choice saves a rule that lets every `tickets.py` command run
+unasked from then on, a post included. Step 7 ends the asking for the commands that only read.
 
 ## 2. What is missing
 
@@ -138,3 +140,7 @@ and run the check (step 6) in the new session.
 
 The script calls `slack.com`, so the agent's sandbox has to allow network access. Codex blocks it by default, and the
 script then says "Slack could not be reached". Where the agent can limit it, allow `slack.com` only.
+
+In a git worktree, an agent whose sandbox may not write to the main checkout keeps its own copy in its worktree, so a
+reply repeats once per worktree at most. To share it, add the main checkout's `.slack-tickets` folder to the folders
+the sandbox may write.
