@@ -72,7 +72,8 @@ Read this before you run one. Keep it true when you change a script or add a cas
   The default permission mode refuses them, and that refusal is what the `list`, `setlist` and `conversation` cases
   look for.
 - The `conversation` case cannot show that the agent waits for the user's go: its write tools are removed, so "tries
-  no write" is the flag's doing.
+  no write" is the flag's doing. It also runs without a token, and the failure it was added for was in a session with
+  one: that path was checked by reading the skill's text, not by a run.
 - The denylist names the connector as `claude_ai_Slack`. If your Slack connector has another name, the list does not
   apply to it.
 - Claude Code runs in `--permission-mode default`, with only the skill, `Write` and (except in `refusal`) every
