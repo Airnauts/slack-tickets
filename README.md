@@ -11,7 +11,8 @@ it too.
   is new.
 - When a new document from the client contradicts an earlier one, Claude proposes a ticket for each conflict.
 - A decision we make after a ticket is posted is added to that ticket's thread, so the thread stays the record.
-- With the token set, Claude also answers ordinary conversation in the channel, as the app and on your go.
+- With the token set, Claude also answers ordinary conversation in the channel, as the app and on your go, and can
+  check the channel on a schedule for new replies and for threads that may be waiting on us.
 
 The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up. Each
 time the skill loads in Claude Code it reads the list of open tickets from Slack, so Claude knows what is already
@@ -108,6 +109,25 @@ own name; in a channel shared with another organization the connector can only c
 Without a connector it gives you the text to paste. `--talk` reads only the last two weeks: a thread started before
 that is not seen, even when someone replies in it.
 
+## Watching the channel
+
+Ask Claude to check the tickets channel, or call the skill with `check`: `/slack-tickets:ticket check`. It runs
+`tickets.py --answers` and `tickets.py --talk` and reports new replies on tickets, then the threads whose last word came
+from outside the app's workspace, each with a proposed reply built from what the project shows, or with what Claude
+needs from you. A check with nothing new says so in one line. It never posts, replies or closes anything: each reply
+needs your go after you have seen its text. In Claude Code the dry run and the post each ask you too, unless your own
+settings already allow them. A reply posts as soon as you approve it, with no draft to send by hand, so if your
+settings allow every `python3` command, nothing else asks before a post. To keep an ask, add
+`Bash(python3 *tickets.py* --post*)` under `permissions.ask` in your own settings; an ask rule wins over a broader
+allow rule. A check marks what it reports as shown; if nobody read that report, `tickets.py --answers --all` and
+`tickets.py --talk --all` show it again.
+
+To repeat it in Claude Code, for example every 30 minutes: `/loop 30m /slack-tickets:ticket check`. The loop runs only
+while that session is open, and ends after 30 days. Another agent runs the same check from its own scheduler. Without a
+token the check reads through the Slack connector, which may ask for each read and remembers nothing between sessions.
+When the project has no channel set, every command names it with `--channel=<id>` and so asks each time; set
+`SLACK_TICKETS_CHANNEL` (the setup's last step) for a check that runs without asking.
+
 ## The script
 
 Claude runs it for you. By hand, with the two variables set (`--setup` needs neither):
@@ -123,7 +143,7 @@ python3 skills/ticket/scripts/tickets.py batch.json --post     post the batch
 python3 skills/ticket/scripts/tickets.py --answers             new replies since the last check
 python3 skills/ticket/scripts/tickets.py --answers --all       every ticket with every reply
 python3 skills/ticket/scripts/tickets.py --talk                threads that are not tickets, new since the last check
-python3 skills/ticket/scripts/tickets.py --talk --all          every such thread of the last two weeks
+python3 skills/ticket/scripts/tickets.py --talk --all          every such thread of the last two weeks (the newest ten)
 python3 skills/ticket/scripts/tickets.py --thread <ts>         one thread in full
 python3 skills/ticket/scripts/tickets.py --reply <ts> note.txt a reply in a ticket's or any other thread (dry run; add --post)
 python3 skills/ticket/scripts/tickets.py --close <ts>          mark a ticket closed

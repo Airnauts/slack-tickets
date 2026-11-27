@@ -1,7 +1,7 @@
 # Does the description call the skill?
 
-An agent decides to use a skill from its name and `description`. `trigger-evals.json` holds 36 prompts: 18 that should
-call the `ticket` skill and 18 near-misses that should not. `run.py` measures, for one description, how often a
+An agent decides to use a skill from its name and `description`. `trigger-evals.json` holds 40 prompts: 20 that should
+call the `ticket` skill and 20 near-misses that should not. `run.py` measures, for one description, how often a
 headless Claude Code session reaches for the skill on each prompt.
 
 ## How a run works
@@ -65,6 +65,8 @@ The four prompts about answering conversation in the tickets channel were added 
 own with Sonnet, three runs each: both that should call the skill did, 3 of 3, and both near misses stayed quiet, 3 of
 3. The description was not changed for them.
 
+The four prompts about checking or watching the channel were added on 27 November 2026 and have not been run yet.
+
 - The original 22 were 11 should-trigger and 11 should-not. Ten harder ones were added afterwards, and the file lists
   should-trigger first, so they are not its first 22 lines.
 - The ten harder prompts were also run on Opus with the own setup for the 910, 443, 275 and 198 character versions:
@@ -81,6 +83,6 @@ own with Sonnet, three runs each: both that should call the skill did, 3 of 3, a
 
 - Only Claude Code is measured, through a stub command, not the installed plugin. Other agents read the same
   description but were not measured.
-- 36 prompts are a sample.
+- 40 prompts are a sample.
 - When the skill is missed, or called when it should not be, in real use, add that prompt here first, then change the
   description.

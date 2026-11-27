@@ -330,8 +330,36 @@ class SkillFileTests(unittest.TestCase):
                      "timestamp of the thread's top-level message", 'tickets.py --talk --all',
                      '*Reply* (<name>):', 'never send it through the connector instead',
                      "under the Tickets app's name", "under the user's own name",
-                     'tickets.py --reply <ts> <file> --post'):
+                     'tickets.py --reply <ts> <file> --post', 'the request is the check itself'):
             self.assertIn(rule, flat)
+
+    def test_the_watch_section_is_there_once_with_its_rules(self):
+        heading = '## Watching the channel'
+        text = read(SKILL, 'SKILL.md')
+        self.assertEqual(text.count('\n' + heading + '\n'), 1)
+        before, after = text.split('\n' + heading + '\n', 1)
+        self.assertTrue(before.rstrip().rsplit('\n## ', 1)[1].startswith('Checking for answers'))
+        self.assertTrue(after.split('\n## ', 1)[1].startswith('Our own decisions after a ticket is posted'))
+        flat = ' '.join(after.split('\n## ', 1)[0].split())
+        for rule in ('tickets.py --answers', 'tickets.py --talk', 'Nothing new in the tickets channel.',
+                     '/loop 30m /slack-tickets:ticket check', 'never posts, replies, closes or drafts anything',
+                     'never takes silence as a go', 'after seeing the exact text', 'propose no answer',
+                     'Start a schedule only when the user asks for one',
+                     'Never add or change a permission rule yourself',
+                     'unless their own settings already allow it',
+                     '`tickets.py --answers --all` and `tickets.py --talk --all` show it again'):
+            self.assertIn(rule, flat)
+
+    def test_the_lines_the_skill_keys_on_are_printed_by_the_script(self):
+        text = read(SKILL, 'SKILL.md')
+        source = read(os.path.join(ROOT, 'skills', 'ticket', 'scripts'), 'tickets.py')
+        for line in ('No new replies.', 'No new conversation.', 'may answer the ticket',
+                     'Shown before, last word still outside or unknown:'):
+            self.assertIn(line, text)
+            self.assertIn(line, source)
+        self.assertIn('[last word {side}]', source)
+        for side in (tickets.OUTSIDE, tickets.UNKNOWN, tickets.INSIDE, tickets.THIS_APP):
+            self.assertIn(f'[last word {side}]', text)
 
     def test_the_script_section_names_every_refusal_prefix(self):
         heading = '## The script'

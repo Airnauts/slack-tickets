@@ -17,6 +17,8 @@
   {"query": "we answered the SSO question ourselves in the end: it turns out their identity provider supports it out of the box. let the client know that one no longer needs an answer", "should_trigger": true},
   {"query": "answer Ann about the extra rule behind the export format, in the project's tickets channel in Slack", "should_trigger": true},
   {"query": "Ben asked in our tickets channel which currencies the invoice export supports, reply to him there", "should_trigger": true},
+  {"query": "keep an eye on the client's tickets channel this afternoon and tell me if anyone there is waiting on an answer from us", "should_trigger": true},
+  {"query": "check the tickets channel: anything new from the client since this morning?", "should_trigger": true},
   {"query": "create a Jira issue for the flaky checkout test in the ZEBRA project, type bug, assign it to me and put the failing assertion in the description: \"expected total 49.00, got 48.99\"", "should_trigger": false},
   {"query": "post in #zz-dev-frontend that the staging deploy is done and the new build is 4.12.0", "should_trigger": false},
   {"query": "ask the frontend team in #zz-dev-frontend if someone can review my pull request today, it is blocking the release", "should_trigger": false},
@@ -34,5 +36,7 @@
   {"query": "set up Slack notifications for failed deploys so they land in #zz-alerts", "should_trigger": false},
   {"query": "open a GitHub issue: the README says the CLI flag is --dry-run but the help output says --preview. one of them is wrong", "should_trigger": false},
   {"query": "answer Ann's email about the export format", "should_trigger": false},
-  {"query": "reply to Ben in the team's general Slack channel that the build is fixed", "should_trigger": false}
+  {"query": "reply to Ben in the team's general Slack channel that the build is fixed", "should_trigger": false},
+  {"query": "keep an eye on the CI run for my pull request and tell me when it goes green", "should_trigger": false},
+  {"query": "check #zz-random every hour and tell me if anyone mentions the office party", "should_trigger": false}
 ]
