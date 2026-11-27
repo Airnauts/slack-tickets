@@ -65,7 +65,9 @@ The four prompts about answering conversation in the tickets channel were added 
 own with Sonnet, three runs each: both that should call the skill did, 3 of 3, and both near misses stayed quiet, 3 of
 3. The description was not changed for them.
 
-The four prompts about checking or watching the channel were added on 27 November 2026 and have not been run yet.
+The four prompts about checking or watching the channel were added on 27 November 2026 and run on their own with
+Sonnet, three runs each: both that should call the skill did, 3 of 3, and both near misses stayed quiet, 3 of 3. The
+description was not changed for them.
 
 - The original 22 were 11 should-trigger and 11 should-not. Ten harder ones were added afterwards, and the file lists
   should-trigger first, so they are not its first 22 lines.
