@@ -71,6 +71,7 @@ CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
 LINE_BREAKS = re.compile(r'[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]')
 # Not Cn (unassigned): an old Python's tables would take a new emoji for one.
 HIDDEN_CATEGORIES = frozenset(('Cf', 'Cc', 'Cs', 'Co'))
+EMOJI_GLUE = {0xfe0e: None, 0xfe0f: None, 0x200d: None}  # what an emoji in a reply may hold; clean() still blanks them
 TIMESTAMP = re.compile(r'[0-9]{10}\.[0-9]{6}').fullmatch
 CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}').fullmatch
 # The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
@@ -669,7 +670,8 @@ def top_level_at(ts, tok, channel):
 def reply(ts, path, flags):
     with open(path, encoding='utf-8', newline='') as source:  # a lone carriage return is not turned into a newline here
         text = source.read().replace('\r\n', '\n')
-    if clean(text) != text:
+    plain = text.translate(EMOJI_GLUE)
+    if clean(plain) != plain:
         sys.exit('Not posted: the reply holds characters that cannot be seen. Type it again as plain text.')
     text = text.strip()
     if not text or '<@' in text or '<!' in text or BROADCAST(text) or len(text) > 3500:

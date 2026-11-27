@@ -632,13 +632,33 @@ class ReplyTests(SlackTestCase):
 
     def test_a_reply_with_characters_that_cannot_be_seen_is_refused(self):
         refused = {'a zero-width space': '\u200b', 'an escape': '\x1b', 'a tag character': '\U000e0041', 'a lone carriage return': '\r',
-                   'a vertical tab': '\x0b', 'a line separator': '\u2028', 'a soft hyphen': '\u00ad'}
+                   'a vertical tab': '\x0b', 'a line separator': '\u2028', 'a soft hyphen': '\u00ad',
+                   'a right-to-left override': '\u202e'}
         for why, char in refused.items():
             for flags in ((), ('--post',)):
                 with self.subTest(why=why, flags=flags):
                     result = self.run_main('--reply', T1, self.note(f'Fine{char} text'), *flags)
                     self.assertEqual(result.code, 'Not posted: the reply holds characters that cannot be seen. Type it again as plain text.')
                     self.assertEqual(self.slack.calls, [])
+
+    def test_a_reply_may_hold_an_emoji_with_a_variation_selector_or_a_joiner(self):
+        emoji = {'a check mark with a variation selector': '\u2714\ufe0f',
+                 'two emoji joined by a joiner': '\U0001f469\u200d\U0001f467'}
+        for why, char in emoji.items():
+            text = f'*Update* (Jo, today): done {char}'
+            with self.subTest(why=why, flags=()):
+                self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1)]})
+                self.slack.respond('auth.test', US)
+                self.slack.respond('users.info', {'ok': True, 'user': {'real_name': 'Tickets'}})
+                result = self.run_main('--reply', T1, self.note(text))
+                self.assertIsNone(result.code)
+                self.assertIn(f'--- the reply\n{text}\n', result.out)
+            with self.subTest(why=why, flags=('--post',)):
+                self.slack.calls.clear()
+                self.slack.respond('chat.postMessage', {'ok': True, 'ts': '1700000900.000100', 'channel': CHANNEL})
+                result = self.run_main('--reply', T1, self.note(text), '--post')
+                self.assertIsNone(result.code)
+                self.assertEqual(self.slack.made('chat.postMessage')[0]['text'], text)
 
     def test_the_broadcast_words_are_found_whatever_stands_around_them(self):
         found = ['@here', 'Hi @Here, look', '_@here_', '*@channel*', '~@everyone~', '@group', 'to @Group: hi', '_@group', 'x _@everyone_ y']
