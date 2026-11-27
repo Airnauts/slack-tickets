@@ -517,6 +517,10 @@ def attached(message):
     return f' [{len(files)} file(s) attached]' if isinstance(files, list) and files else ''
 
 
+def thread_size(top, fallback):
+    return top['reply_count'] if isinstance(top.get('reply_count'), int) else fallback
+
+
 class People:
     """Names and sides of the people in the channel. Names are kept in the state; users.info is asked once per run."""
 
@@ -546,6 +550,9 @@ class People:
         text = re.sub(r'<@(\w+)(?:\|[^>]*)?>', lambda m: '@' + (self.name(m.group(1)) if look_up else self.names.get(m.group(1), 'someone')), clean(text or ''))
         text = re.sub(r'<(https?://[^|>]+)\|([^>]+)>', r'\2', text)
         return re.sub(r'<(https?://[^>]+)>', r'\1', text)
+
+    def who(self, message):
+        return f'{self.side(message)}: {cut(self.name(message.get("user")), FIELD_LENGTH)}'
 
     def side(self, message):
         """Where a message comes from, seen from the app's own workspace. What Slack does not say is UNKNOWN, never INSIDE."""
@@ -669,15 +676,15 @@ def reply(ts, path, flags):
         print(f'--- reply in the thread of {ts}')
         if top:
             people = People(tok, recall()['names'], us(tok))
-            total = top['reply_count'] if isinstance(top.get('reply_count'), int) else 0
-            print(f'It starts with: {when(ts)} | {"a ticket" if is_ticket(top) else "not a ticket"} | thread {total} | '
-                  f'{people.side(top)}: {cut(people.name(top.get("user")), FIELD_LENGTH)}')
+            print(f'It starts with: {when(ts)} | {"a ticket" if is_ticket(top) else "not a ticket"} | '
+                  f'thread {thread_size(top, 0)} | {people.who(top)}')
             print('  ' + cut(one_line(people.plain(top.get('text'), look_up=False)), HINT_LENGTH))
         else:
             print('Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.')
         print(f'--- the reply\n{text}')
-        if LINK(text):
-            print('Links in it: ' + ' '.join(LINK(text)))
+        links = LINK(text)
+        if links:
+            print('Links in it: ' + ' '.join(links))
         print(f'\nDry run for {channel}, nothing posted. Add --post to post.')
         return
     sent = call('chat.postMessage', tok, channel=channel, thread_ts=ts, text=text, unfurl_links=False, unfurl_media=False)
@@ -861,14 +868,14 @@ def talk(flags):
         last = next((m for m in reversed([top] + later) if people.side(m) != AN_APP), top)
         side = UNKNOWN if more or people.side(last) == AN_APP else people.side(last)
         listed = later[-TALK_REPLIES:]
-        total = top['reply_count'] if isinstance(top.get('reply_count'), int) else len(later)
+        total = thread_size(top, len(later))
         hint = f' | may answer the ticket {after[top["ts"]]}' if top['ts'] in after else ''
-        lines = [f'[last word {side}] ts {top["ts"]} | thread {total}{hint} | {when(top["ts"])} | {people.side(top)}: {cut(people.name(top.get("user")), FIELD_LENGTH)}',
+        lines = [f'[last word {side}] ts {top["ts"]} | thread {total}{hint} | {when(top["ts"])} | {people.who(top)}',
                  '  ' + cut(one_line(people.plain(top.get('text'), look_up=False)), TALK_LENGTH) + attached(top)]
         if total > len(listed):
             lines.append(f'    (earlier, not shown: {replies_count(total - len(listed))})')
         for r in listed:
-            lines.append(f'    {when(r["ts"])} | {people.side(r)}: {cut(people.name(r.get("user")), FIELD_LENGTH)}: '
+            lines.append(f'    {when(r["ts"])} | {people.who(r)}: '
                          f'{cut(one_line(people.plain(r.get("text"), look_up=False)), TALK_LENGTH)}{attached(r)}')
         if more:
             lines.append(f'    (a long thread: {TALK_PAGES * 200} new messages were read, not all)')
@@ -911,12 +918,12 @@ def show_thread(ts):
     thread, more = read_thread(channel, tok, ts, THREAD_PAGES)
     later = [r for r in thread if r.get('ts') != ts]
     listed = later[-THREAD_REPLIES:]
-    total = top['reply_count'] if isinstance(top.get('reply_count'), int) else len(later)
-    print(f'Thread {ts} in {channel}, {"a ticket" if is_ticket(top) else "not a ticket"}, {replies_count(total)}:')
+    print(f'Thread {ts} in {channel}, {"a ticket" if is_ticket(top) else "not a ticket"}, '
+          f'{replies_count(thread_size(top, len(later)))}:')
     for number, message in enumerate([top] + listed):
         if number == 1 and len(later) > len(listed):
             print(f'  (earlier, not shown: {replies_count(len(later) - len(listed))})')
-        print(f'  {when(message["ts"])} | {people.side(message)}: {cut(people.name(message.get("user")), FIELD_LENGTH)}{attached(message)}')
+        print(f'  {when(message["ts"])} | {people.who(message)}{attached(message)}')
         print('\n'.join('    ' + line for line in cut(people.plain(message.get('text'), look_up=False), THREAD_LENGTH).split('\n')))
     if more:
         print(f'(A long thread: only its first {THREAD_PAGES * 200} messages were read, so the newest are not shown.)')
