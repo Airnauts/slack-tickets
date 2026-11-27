@@ -99,9 +99,10 @@ reads everything and starts over.
 A ticket posted from a person's account, not by an app, is marked so in `--list` and `--answers`: anyone
 in the channel can post a message shaped like a ticket.
 
-When you ask Claude to answer an ordinary message or thread in the tickets channel, it reads it and replies through the
-Slack connector under your own name, shows you the text first, and sends on your go. In a channel shared with another
-organization the reply arrives as a draft for you to send. The script itself only replies in ticket threads.
+When you ask Claude to answer an ordinary message or thread in the tickets channel, it reads it, shows you the reply
+and the message it answers, and on your go sends it through the Slack connector under your own name. In a channel
+shared with another organization it creates a draft instead, for you to send. Without a connector it gives you the text
+to paste. The script itself only replies in ticket threads.
 
 ## The script
 

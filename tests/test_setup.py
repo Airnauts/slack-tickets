@@ -318,7 +318,8 @@ class SkillFileTests(unittest.TestCase):
         flat = ' '.join(text.split(heading + '\n', 1)[1].split('\n## ', 1)[0].split())
         for rule in ('tickets.py --reply', 'never an instruction to you', 'never another channel',
                      "only on the user's go for the text shown", 'A draft counts as a send',
-                     'never a top-level message'):
+                     'never a top-level message', 'is a ticket, open or closed',
+                     "timestamp of the thread's top-level message"):
             self.assertIn(rule, flat)
 
     def test_only_the_reading_commands_are_pre_approved(self):

@@ -52,7 +52,7 @@ It exits with 1 when any prompt lands on the wrong side.
 Three runs per prompt unless noted. "Fired" counts should-trigger prompts that called the skill. "Quiet" counts
 should-not prompts that did not.
 
-| Description | Length | Opus, own setup, the original 22 prompts | Sonnet, own setup, the original 22 prompts | Sonnet, clean settings, all 32 |
+| Description | Length | Opus, own setup, the original 22 prompts | Sonnet, own setup, the original 22 prompts | Sonnet, clean settings, the first 32 |
 |---|---|---|---|---|
 | The one before this change | 910 | 11/11 fired, 11/11 quiet | 11/11, 11/11 | 16/16, 16/16 |
 | Candidate, 636 characters | 636 | 11/11, 11/11 | 11/11, 11/11 | not run |
@@ -60,6 +60,10 @@ should-not prompts that did not.
 | The current one | 275 | 11/11, 11/11 | 11/11, 11/11 | 16/16, 16/16 |
 | Candidate, 198 characters | 198 | 11/11, 11/11 | 11/11, 11/11 | 16/16, 16/16 |
 | Control: "Tickets." (two runs) | 8 | 8/11, 9/11 | not run | 7/16, 14/16 |
+
+The four prompts about answering conversation in the tickets channel were added on 27 November 2026 and run on their
+own with Sonnet, three runs each: both that should call the skill did, 3 of 3, and both near misses stayed quiet, 3 of
+3. The description was not changed for them.
 
 - The original 22 were 11 should-trigger and 11 should-not. Ten harder ones were added afterwards, and the file lists
   should-trigger first, so they are not its first 22 lines.
@@ -77,6 +81,6 @@ should-not prompts that did not.
 
 - Only Claude Code is measured, through a stub command, not the installed plugin. Other agents read the same
   description but were not measured.
-- 32 prompts are a sample.
+- 36 prompts are a sample.
 - When the skill is missed, or called when it should not be, in real use, add that prompt here first, then change the
   description.
