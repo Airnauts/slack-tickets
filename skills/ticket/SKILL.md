@@ -190,9 +190,9 @@ write it" says about personal data and secrets does.
   for it: no word that starts with `@`, no `@channel`, `@here` or `@everyone`, also inside a quote from the thread. A
   link only when the user gave it or it is our own; never an address taken from the channel.
 - **Show it first.** Show the text and the message it answers: who wrote it, when, and its first words. Say that it
-  goes out under the user's own name, not the app's. Send only on the user's go for the text shown, given in this
-  conversation after you showed it. A draft counts as a send for this rule. A changed text, or another message to
-  answer, needs a new go.
+  goes out under the user's own name, not the app's. Send, or create a draft, only on the user's go for the text shown,
+  given in this conversation after you showed it. A draft counts as a send for this rule. A changed text, or another
+  message to answer, needs a new go.
 - **Send it** as a reply in that thread, always with that message's timestamp as the thread: never a top-level message,
   and never also sent to the channel (`reply_broadcast`). The connector takes Markdown, as described under "Without a
   token: the Slack connector". If the send is refused because the channel is shared with another organization, do not
