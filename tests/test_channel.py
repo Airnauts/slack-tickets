@@ -41,7 +41,7 @@ class ChannelFlagTests(ChannelTestCase):
     def test_a_dry_run_with_the_flag_names_that_channel(self):
         code, out = run_cli([self.batch(), f'--channel={CHANNEL}'])
         self.assertEqual(code, 0)
-        self.assertEqual(out.splitlines()[-1], f'Dry run: 1 tickets for {CHANNEL}, nothing posted. Add --post to post.')
+        self.assertEqual(out.splitlines()[-1], f'Dry run: 1 ticket for {CHANNEL}, nothing posted. Add --post to post.')
         self.assertFalse(os.path.exists(os.path.join(self.tmp, 'batch.result.json')))
 
     def test_a_variable_that_is_not_an_id_is_never_printed(self):
@@ -82,7 +82,7 @@ class BatchChannelFieldTests(ChannelTestCase):
             with self.subTest(channel=value):
                 code, out = self.dry_run({'channel': value})
                 self.assertEqual(code, 0, out)
-                self.assertIn(f'Dry run: 1 tickets for {OTHER_CHANNEL}, nothing posted.', out)
+                self.assertIn(f'Dry run: 1 ticket for {OTHER_CHANNEL}, nothing posted.', out)
 
     def test_another_channel_is_refused(self):
         code, out = self.dry_run({'channel': THIRD_CHANNEL})
