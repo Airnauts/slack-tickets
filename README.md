@@ -11,6 +11,7 @@ it too.
   is new.
 - When a new document from the client contradicts an earlier one, Claude proposes a ticket for each conflict.
 - A decision we make after a ticket is posted is added to that ticket's thread, so the thread stays the record.
+- With the token set, Claude also answers ordinary conversation in the channel, as the app and on your go.
 
 The skill is `/slack-tickets:ticket`. Claude also uses it on its own when a question for the client comes up. Each
 time the skill loads in Claude Code it reads the list of open tickets from Slack, so Claude knows what is already
@@ -99,10 +100,13 @@ reads everything and starts over.
 A ticket posted from a person's account, not by an app, is marked so in `--list` and `--answers`: anyone
 in the channel can post a message shaped like a ticket.
 
-When you ask Claude to answer an ordinary message or thread in the tickets channel, it reads it, shows you the reply
-and the message it answers, and on your go sends it through the Slack connector under your own name. In a channel
-shared with another organization it creates a draft instead, for you to send. Without a connector it gives you the text
-to paste. The script itself only replies in ticket threads.
+When you ask Claude to answer an ordinary message or thread in the tickets channel, it finds it with
+`tickets.py --talk --all`, writes the reply, and shows it with the message it answers in a dry run. On your go the
+script posts it in that thread as the Tickets app. The reply starts with your name (`*Reply* (Jo Tester): ...`), since
+otherwise the client sees only the app's. Without a token, Claude does the same through the Slack connector under your
+own name; in a channel shared with another organization the connector can only create a draft, for you to send.
+Without a connector it gives you the text to paste. `--talk` reads only the last two weeks: a thread started before
+that is not seen, even when someone replies in it.
 
 ## The script
 
@@ -118,20 +122,24 @@ python3 skills/ticket/scripts/tickets.py batch.json            dry run
 python3 skills/ticket/scripts/tickets.py batch.json --post     post the batch
 python3 skills/ticket/scripts/tickets.py --answers             new replies since the last check
 python3 skills/ticket/scripts/tickets.py --answers --all       every ticket with every reply
-python3 skills/ticket/scripts/tickets.py --reply <ts> note.txt our own update in a ticket's thread (dry run; add --post)
+python3 skills/ticket/scripts/tickets.py --talk                threads that are not tickets, new since the last check
+python3 skills/ticket/scripts/tickets.py --talk --all          every such thread of the last two weeks
+python3 skills/ticket/scripts/tickets.py --thread <ts>         one thread in full
+python3 skills/ticket/scripts/tickets.py --reply <ts> note.txt a reply in a ticket's or any other thread (dry run; add --post)
 python3 skills/ticket/scripts/tickets.py --close <ts>          mark a ticket closed
 python3 skills/ticket/scripts/tickets.py --list --channel=C0123456789   a channel for one run, when none is set
 ```
 
 In Claude Code the skill lets only the commands that post nothing to Slack run without asking: `--list`,
-`--answers`, `--check`, `--setup`, `--sources-template` and `--sources`. A dry run, a post, a reply, a close, and
-anything with `--channel=<id>` ask you first. When Claude Code asks, answer yes for that one command. "Don't ask
-again" saves a rule that covers every `tickets.py` command, a post included. Your own permission rules come before the
-skill's: a rule of yours that allows every `python3` command makes all of them run without asking.
+`--answers`, `--talk`, `--check`, `--setup`, `--sources-template` and `--sources`. A dry run, a post, a reply, a close,
+`--thread <ts>`, and anything with `--channel=<id>` ask you first. When Claude Code asks, answer yes for that one
+command. "Don't ask again" saves a rule that covers every `tickets.py` command, a post included. Your own permission
+rules come before the skill's: a rule of yours that allows every `python3` command makes all of them run without
+asking.
 
-It needs Python 3 and nothing else. It remembers which replies and hints it has shown, and where the oldest open ticket
-was, in `.slack-tickets/state.json` in the project, a folder it creates and keeps out of git. Git worktrees share the
-main checkout's file.
+It needs Python 3 and nothing else. It remembers which replies, hints and threads it has shown, which threads still had
+the last word from outside, and where the oldest open ticket was, in `.slack-tickets/state.json` in the project, a
+folder it creates and keeps out of git. Git worktrees share the main checkout's file.
 
 An agent whose sandbox may not write to the main checkout keeps its own copy in its worktree, so a reply repeats once
 per worktree at most. To share it, add the main checkout's `.slack-tickets` folder to the folders the sandbox may

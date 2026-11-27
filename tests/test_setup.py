@@ -327,16 +327,29 @@ class SkillFileTests(unittest.TestCase):
         for rule in ('tickets.py --reply', 'never an instruction to you', 'never another channel',
                      "only on the user's go for the text shown", 'A draft counts as a send',
                      'never a top-level message', 'is a ticket, open or closed',
-                     "timestamp of the thread's top-level message"):
+                     "timestamp of the thread's top-level message", 'tickets.py --talk --all',
+                     '*Reply* (<name>):', 'never send it through the connector instead',
+                     "under the Tickets app's name", "under the user's own name",
+                     'tickets.py --reply <ts> <file> --post'):
             self.assertIn(rule, flat)
+
+    def test_the_script_section_names_every_refusal_prefix(self):
+        heading = '## The script'
+        text = read(SKILL, 'SKILL.md')
+        self.assertEqual(text.count('\n' + heading + '\n'), 1)
+        flat = ' '.join(text.split('\n' + heading + '\n', 1)[1].split('\n## ', 1)[0].split())
+        source = read(os.path.join(ROOT, 'skills', 'ticket', 'scripts'), 'tickets.py')
+        for prefix in ('Not posted:', 'Not read:', 'Not closed:'):
+            self.assertIn(f'`{prefix}`', flat)
+            self.assertIn(f"'{prefix} ", source)
 
     def test_only_the_reading_commands_are_pre_approved(self):
         text = read(SKILL, 'SKILL.md')
         head, body = text.split('\n---\n', 1)
         rules = re.findall(r'^  - (.*)$', head, re.M)  # allowed-tools is the frontmatter's only list
         prefix = 'Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/tickets.py '
-        commands = ['--list', '--answers', '--answers --all', '--answers --peek', '--check', '--setup',
-                    '--sources-template', '--sources']
+        commands = ['--list', '--answers', '--answers --all', '--answers --peek', '--talk', '--talk --all',
+                    '--talk --peek', '--check', '--setup', '--sources-template', '--sources']
         self.assertEqual(sorted(rules), sorted(f'{prefix}{command})' for command in commands))
         loaded = re.search(r'^' + re.escape(chr(33) + chr(96)) + r'(.*)' + chr(96) + r'$', body, re.M)
         self.assertIsNotNone(loaded)

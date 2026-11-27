@@ -54,7 +54,7 @@ Read this before you run one. Keep it true when you change a script or add a cas
   script runs `tickets.py --check --channel=C0000000000` with that PATH and no token. If the output does not say
   `No Slack token`, the run stops. At the end it prints whether the stub was used by the agent's own commands. The
   script cannot post without a token.
-- The skill pre-approves only the commands that read (`--list`, `--answers`, `--check`, `--setup`,
+- The skill pre-approves only the commands that read (`--list`, `--answers`, `--talk`, `--check`, `--setup`,
   `--sources-template` and `--sources`). The other six cases add a rule that allows every `tickets.py` command, to
   stand in for a user who approves each prompt. So in those cases "the agent does not post through the script" is what
   the skill's text should make it do, not something a flag enforces. What stops a post is still the missing token. The
@@ -73,7 +73,9 @@ Read this before you run one. Keep it true when you change a script or add a cas
   look for.
 - The `conversation` case cannot show that the agent waits for the user's go: its write tools are removed, so "tries
   no write" is the flag's doing. It also runs without a token, and the failure it was added for was in a session with
-  one: that path was checked by reading the skill's text, not by a run.
+  one: that path was checked by reading the skill's text, not by a run. With a token the skill now answers conversation
+  through the script (`--talk`, `--reply`), as the app; no run has a token, so that path is covered by
+  `tests/test_conversation.py` and by reading the skill's text, and the case shows only the path without one.
 - The denylist names the connector as `claude_ai_Slack`. If your Slack connector has another name, the list does not
   apply to it.
 - Claude Code runs in `--permission-mode default`, with only the skill, `Write` and (except in `refusal`) every
