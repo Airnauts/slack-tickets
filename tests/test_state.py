@@ -11,7 +11,7 @@ from unittest import mock
 
 from helpers import ARABIC_INDIC_TS, CHANNEL, OTHER_CHANNEL, TicketsTestCase, clean_git_environment
 
-EMPTY = {'names': {}, 'seen': {}, 'hinted': {}, 'oldest_open': {}}
+EMPTY = {'names': {}, 'seen': {}, 'hinted': {}, 'waiting': {}, 'oldest_open': {}}
 needs_git = unittest.skipUnless(shutil.which('git'), 'git is not installed')
 needs_links = unittest.skipUnless(hasattr(os, 'symlink'), 'no symbolic links on this system')
 
@@ -202,6 +202,14 @@ class WorktreeStateTests(StateTestCase):
                 self.put_in(self.tree, json.dumps({'hinted': {'1.0': tree_last}}))
                 self.assertEqual(self.tickets.recall()['hinted'], {'1.0': '3.000003'})
 
+    def test_the_later_waiting_wins_whichever_place_holds_it(self):
+        os.chdir(self.tree)
+        for main_last, tree_last in (('2.000002', '3.000003'), ('3.000003', '2.000002')):
+            with self.subTest(main=main_last):
+                self.put_in(self.repo, json.dumps({'waiting': {'1.0': main_last}}))
+                self.put_in(self.tree, json.dumps({'waiting': {'1.0': tree_last}}))
+                self.assertEqual(self.tickets.recall()['waiting'], {'1.0': '3.000003'})
+
     def test_the_earlier_bound_wins_whichever_place_holds_it(self):
         os.chdir(self.tree)
         for main_ts, tree_ts in (('1700000000.000100', '1700001000.000100'), ('1700001000.000100', '1700000000.000100')):
@@ -236,7 +244,7 @@ class WorktreeStateTests(StateTestCase):
             with self.subTest(broken=broken):
                 self.put_in(broken, '{not json')
                 self.put_in(good, json.dumps({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}}))
-                self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}, 'oldest_open': {}})
+                self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}, 'waiting': {}, 'oldest_open': {}})
 
     @needs_links
     @needs_permissions
@@ -287,7 +295,7 @@ class InheritedGitVariablesTests(StateTestCase):
 class TrackedStateTests(StateTestCase):
     """A file that arrives through a branch is tracked by git. The script's own file never is."""
     PLANTED = {'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Eve'}}
-    FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}, 'hinted': {}, 'oldest_open': {}}
+    FRESH = {'seen': {'3.0': '4.000004'}, 'names': {'U2': 'Ann'}, 'hinted': {}, 'waiting': {}, 'oldest_open': {}}
 
     def commit_state(self, folder, text):
         self.put_in(folder, text)
@@ -370,7 +378,7 @@ class StatePathOutsideGitTests(StateTestCase):
         os.makedirs(plain)
         os.chdir(plain)
         self.tickets.remember({'seen': {'1.0': '2.000002'}, 'names': {'U1': 'Ann'}})
-        self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}, 'oldest_open': {}})
+        self.assertEqual(self.tickets.recall(), {'names': {'U1': 'Ann'}, 'seen': {'1.0': '2.000002'}, 'hinted': {}, 'waiting': {}, 'oldest_open': {}})
 
 
 @needs_links
@@ -412,7 +420,8 @@ class StateContentTests(StateTestCase):
 
     def test_wrong_shapes_count_as_nothing_remembered(self):
         self.project('shape')
-        for name, text in (('a list', '[]'), ('seen as a list', '{"seen": []}'), ('names as a string', '{"names": "x"}')):
+        for name, text in (('a list', '[]'), ('seen as a list', '{"seen": []}'), ('names as a string', '{"names": "x"}'),
+                           ('waiting as a list', '{"waiting": []}')):
             with self.subTest(shape=name):
                 self.put(text)
                 self.assertEqual(self.tickets.recall(), EMPTY)
@@ -431,6 +440,11 @@ class StateContentTests(StateTestCase):
         self.project('hints')
         self.put(json.dumps({'hinted': {'1.0': '2.000002', '3.0': 'inf', '4.0': None}}))
         self.assertEqual(self.tickets.recall()['hinted'], {'1.0': '2.000002'})
+
+    def test_only_believable_waiting_timestamps_are_kept(self):
+        self.project('waiting')
+        self.put(json.dumps({'waiting': {'1.0': '2.000002', '3.0': 'inf', '4.0': None}}))
+        self.assertEqual(self.tickets.recall()['waiting'], {'1.0': '2.000002'})
 
     def test_an_odd_bound_means_a_full_read_of_its_channel(self):
         self.project('bound')
