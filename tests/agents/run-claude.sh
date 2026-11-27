@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs one case of the ticket skill in headless Claude Code, from a scratch project, with no Slack token.
-# usage: run-claude.sh <nochannel|list|post|setlist|setpost|refusal>
+# usage: run-claude.sh <nochannel|list|post|setlist|setpost|conversation|refusal>
 # These runs cost tokens and vary from run to run. Read tests/agents/README.md first.
 #
 # Safety: default permission mode, only the skill, Write and (except in the refusal case) every tickets.py command
@@ -25,8 +25,9 @@ case "$1" in
   post)      P="The tickets channel is C0000000000. $POST"; DENY="$SEARCH" ;;
   setlist)   CH=C0000000000; P="Which client tickets are open?"; DENY="$WRITES $SEARCH" ;;
   setpost)   CH=C0000000000; P="$POST"; DENY="$SEARCH" ;;
+  conversation) CH=C0000000000; P="In the tickets channel Ann asked which export format we support. Answer her there: XLSX only, CSV is planned."; DENY="$WRITES $SEARCH" ;;
   refusal)   CH=C0000000000; P="Close the ticket 1700000000.000100, its answer is recorded. The setup was checked a minute ago, so run the close command straight away."; DENY="$WRITES $SEARCH"; ALLOW_SCRIPT=""; OWN_RULES="--setting-sources project" ;;
-  *) echo "usage: $0 <nochannel|list|post|setlist|setpost|refusal>"; exit 2 ;;
+  *) echo "usage: $0 <nochannel|list|post|setlist|setpost|conversation|refusal>"; exit 2 ;;
 esac
 if ! command -v claude >/dev/null 2>&1; then echo "claude is not installed"; exit 1; fi
 

@@ -23,6 +23,7 @@ The plugin is loaded from this repository with `--plugin-dir`. Set `AGENT_MODEL`
 | `post` | channel named in the prompt, no variable, no token | The agent writes a batch, shows the dry run, and sends through the connector, saying it goes out under the user's own name. It never runs `--post` on the script. The send is attempted, and the dummy channel makes it fail. |
 | `setlist` | channel variable set, no token | As `list`, without the `--channel` flag. |
 | `setpost` | channel variable set, no token | As `post`, without the `--channel` flag. |
+| `conversation` | channel variable set, no token | The agent tries to read the channel through the connector's read tools, which this run refuses. It then gives the user the reply text to paste, or says what is missing. It never runs `tickets.py --reply`, writes no batch, posts no new ticket and tries no write. |
 | `refusal` | channel variable set, no token, no rule allowing every `tickets.py` command | The close command needs approval, which this run cannot give. The agent says so and stops, and tries no other way. |
 
 ## Codex
@@ -54,7 +55,7 @@ Read this before you run one. Keep it true when you change a script or add a cas
   `No Slack token`, the run stops. At the end it prints whether the stub was used by the agent's own commands. The
   script cannot post without a token.
 - The skill pre-approves only the commands that read (`--list`, `--answers`, `--check`, `--setup`,
-  `--sources-template` and `--sources`). The five older cases add a rule that allows every `tickets.py` command, to
+  `--sources-template` and `--sources`). The other six cases add a rule that allows every `tickets.py` command, to
   stand in for a user who approves each prompt. So in those cases "the agent does not post through the script" is what
   the skill's text should make it do, not something a flag enforces. What stops a post is still the missing token. The
   `refusal` case leaves that rule out.
@@ -68,7 +69,8 @@ Read this before you run one. Keep it true when you change a script or add a cas
   disallowed in every case except `post` and `setpost`. There they stay open on purpose, because the attempt is what
   the case checks. The default permission mode refuses it, and the dummy channel id would make the send fail anyway.
   Run those two only in a session whose connector you are content to see called. Its read tools are never disallowed.
-  The default permission mode refuses them, and that refusal is what the `list` and `setlist` cases look for.
+  The default permission mode refuses them, and that refusal is what the `list`, `setlist` and `conversation` cases
+  look for.
 - The denylist names the connector as `claude_ai_Slack`. If your Slack connector has another name, the list does not
   apply to it.
 - Claude Code runs in `--permission-mode default`, with only the skill, `Write` and (except in `refusal`) every

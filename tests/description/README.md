@@ -1,7 +1,7 @@
 # Does the description call the skill?
 
-An agent decides to use a skill from its name and `description`. `trigger-evals.json` holds 32 prompts: 16 that should
-call the `ticket` skill and 16 near-misses that should not. `run.py` measures, for one description, how often a
+An agent decides to use a skill from its name and `description`. `trigger-evals.json` holds 36 prompts: 18 that should
+call the `ticket` skill and 18 near-misses that should not. `run.py` measures, for one description, how often a
 headless Claude Code session reaches for the skill on each prompt.
 
 ## How a run works
