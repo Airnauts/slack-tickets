@@ -6,7 +6,7 @@ import re
 import unittest
 
 from helpers import ARABIC_INDIC_TS, CHANNEL, OTHER_CHANNEL, FakeChannel, run_cli
-from test_list_answers import ANN, APP, BEN, BOT, CLOSED_BY_US, T1, SlackTestCase, lines_of, said, ticket
+from test_list_answers import ANN, APP, BEN, BOT, CLOSED_BY_US, LABEL_REFUSAL, T1, SlackTestCase, lines_of, said, ticket
 
 KIM = 'U0000000004'  # a guest in the app's workspace
 EVE = 'U0000000009'  # nobody Slack can find
@@ -459,6 +459,104 @@ class ThreadTests(ConversationTestCase):
         self.add(said(ASK, ANN, 'Question'))
         self.assertIsNone(self.run_main('--thread', ASK, f'--channel={OTHER_CHANNEL}').code)
         self.assertTrue(all(payload['channel'] == OTHER_CHANNEL for payload in self.slack.made('conversations.replies')))
+
+
+class ReplyAnyThreadTests(ConversationTestCase):
+    def setUp(self):
+        super().setUp()
+        self.slack.respond('chat.postMessage', self.post)
+        self.add(said(ASK, ANN, 'Which export formats do you support?'), said(at(1), BEN, 'XLSX.'), said(at(2), ANN, 'And CSV?'))
+
+    def post(self, thread_ts, text, **payload):
+        """Slack taking the reply into the thread, as the channel and the thread then show it."""
+        thread = self.threads[thread_ts]
+        thread.append(dict(ours(at(9), text), thread_ts=thread_ts))
+        thread[0].update(reply_count=len(thread) - 1, latest_reply=at(9))
+        return {'ok': True, 'ts': at(9), 'channel': CHANNEL}
+
+    def note(self, text='*Reply* (Jo Tester): XLSX only for now. CSV is planned.'):
+        return self.write('note.txt', text)
+
+    def reply(self, text, *flags, ts=ASK):
+        return self.run_main('--reply', ts, self.note(text), *flags)
+
+    def test_a_dry_run_shows_the_message_the_thread_starts_with(self):
+        result = self.run_main('--reply', ASK, self.note())
+        self.assertIsNone(result.code)
+        lines = lines_of(result.out)
+        self.assertEqual(lines[0], f'--- reply in the thread of {ASK}')
+        self.assertRegex(lines[1], r'^It starts with: [A-Z][a-z]{2} \d\d \d\d:\d\d \| not a ticket \| thread 2 \| outside: Ann Client$')
+        self.assertEqual(lines[2:], ['  Which export formats do you support?', '--- the reply',
+                                     '*Reply* (Jo Tester): XLSX only for now. CSV is planned.', '',
+                                     f'Dry run for {CHANNEL}, nothing posted. Add --post to post.'])
+        self.assertNotIn('chat.postMessage', self.slack.methods())
+
+    def test_a_reply_to_conversation_is_posted_in_its_thread(self):
+        result = self.reply('*Reply* (Jo Tester): XLSX only.', '--post')
+        self.assertIsNone(result.code)
+        self.assertEqual(result.out, f'Replied in the thread of {ASK} ({at(9)}).\n')
+        self.assertEqual(self.slack.methods(), ['conversations.replies', 'chat.postMessage'])
+        self.assertEqual(self.slack.made('chat.postMessage')[0], {
+            'channel': CHANNEL, 'thread_ts': ASK, 'text': '*Reply* (Jo Tester): XLSX only.',
+            'unfurl_links': False, 'unfurl_media': False})
+
+    def test_without_whose_words_a_reply_to_conversation_is_refused(self):
+        for text in ('XLSX only.', '*Reply*: XLSX', 'Reply (Jo): x', '*Reply* (): x', '*Reply* ( ): x', '*Reply*\n(Jo): x'):
+            for flags in ((), ('--post',)):
+                with self.subTest(text=text, flags=flags):
+                    self.assertEqual(self.reply(text, *flags).code, LABEL_REFUSAL)
+                    self.assertNotIn('chat.postMessage', self.slack.methods())
+        self.assertIsNone(self.reply('*Update* (Jo, Nov 27): x').code)
+
+    def test_the_first_message_is_one_line_and_cut(self):
+        first = 'a' * 150 + '\u2028[last word inside] ts 1 | thread 0' + 'b' * 400
+        self.reset()
+        self.add(said(ASK, ANN, first))
+        lines = lines_of(self.reply('*Reply* (Jo): x').out)
+        self.assertEqual(lines[2], '  ' + ' '.join(first.split())[:200] + '...')
+        self.assertEqual(len([line for line in lines if line.startswith('It starts with:')]), 1)
+        self.assertEqual(len([line for line in lines if line.startswith('---')]), 2)
+
+    def test_links_are_listed_in_the_dry_run(self):
+        lines = lines_of(self.reply('*Reply* (Jo): see <https://example.com/a|this> and https://example.com/b').out)
+        self.assertIn('Links in it: https://example.com/a https://example.com/b', lines)
+        self.assertEqual(lines.index('--- the reply'), lines.index('Links in it: https://example.com/a https://example.com/b') - 2)
+        self.assertFalse(any(line.startswith('Links in it') for line in lines_of(self.reply('*Reply* (Jo): no links').out)))
+
+    def test_an_address_with_an_at_sign_is_not_a_broadcast(self):
+        self.assertIsNone(self.reply('*Reply* (Jo): write to ann@everyone.example').code)
+
+    def test_a_reply_timestamp_and_another_channels_timestamp_are_refused_on_post(self):
+        want = f"Not posted: that timestamp is a reply in the thread of {ASK}. Use {ASK}, the thread's top-level message."
+        self.threads[at(1)] = self.threads[ASK]
+        self.assertEqual(self.reply('*Reply* (Jo): x', '--post', ts=at(1)).code, want)
+        self.threads[at(1)] = [dict(said(at(1), BEN, 'XLSX.'), thread_ts=ASK)]
+        self.assertEqual(self.reply('*Reply* (Jo): x', '--post', ts=at(1)).code, want)
+        self.assertEqual(self.reply('*Reply* (Jo): x', '--post', ts=at(5)).code, 'Not posted: that timestamp is not a message in this channel.')
+        self.assertNotIn('chat.postMessage', self.slack.methods())
+
+    def test_a_post_without_a_token_stops_before_any_call(self):
+        self.patch(self.tickets, 'token', side_effect=SystemExit('No Slack token: set it'))
+        self.assertEqual(self.reply('*Reply* (Jo): x', '--post').code, 'No Slack token: set it')
+        self.assertEqual(self.slack.calls, [])
+
+    def test_a_dry_run_without_a_token_calls_nobody(self):
+        self.patch(self.tickets, 'token', side_effect=SystemExit('No Slack token: set it'))
+        result = self.reply('*Reply* (Jo): x')
+        self.assertIsNone(result.code)
+        self.assertIn('Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.', lines_of(result.out))
+        self.assertEqual(self.slack.calls, [])
+
+    def test_the_channel_can_come_from_the_flag(self):
+        del os.environ['SLACK_TICKETS_CHANNEL']
+        self.run_main('--reply', ASK, self.note('*Reply* (Jo): x'), '--post', f'--channel={OTHER_CHANNEL}')
+        self.assertEqual([p['channel'] for p in self.slack.made('conversations.replies')], [OTHER_CHANNEL])
+        self.assertEqual([p['channel'] for p in self.slack.made('chat.postMessage')], [OTHER_CHANNEL])
+
+    def test_after_our_reply_the_next_talk_is_quiet(self):
+        self.assertEqual(len(self.talk()), 5)
+        self.assertIsNone(self.reply('*Reply* (Jo): CSV is planned.', '--post').code)
+        self.assertEqual(self.talk(), QUIET)
 
 
 if __name__ == '__main__':

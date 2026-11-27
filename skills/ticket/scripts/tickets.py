@@ -11,8 +11,8 @@
   tickets.py --talk --all          every such thread of the last 14 days (the newest 10)
   tickets.py --talk --peek         as --talk, without remembering what was shown
   tickets.py --thread <ts>         one thread in full: any top-level message of the channel
-  tickets.py --reply <ts> note.txt         dry run of a reply in a ticket's thread (our own update or decision)
-  tickets.py --reply <ts> note.txt --post  posts it
+  tickets.py --reply <ts> note.txt         dry run of a reply in a thread, a ticket's or any other: shows the message it starts with
+  tickets.py --reply <ts> note.txt --post  posts it (a reply outside a ticket's thread starts with "*Reply* (<name>): ")
   tickets.py --close <ts>          marks a ticket closed with a check mark (the top-level message's timestamp)
   tickets.py --check               says which channel and whose token (never prints the token)
   tickets.py --setup               prints the setup steps and the Slack app manifest (needs nothing, calls nobody)
@@ -60,6 +60,9 @@ THREAD_REPLIES = 20
 THREAD_LENGTH = 1500
 THREAD_PAGES = 10
 THIS_APP, INSIDE, OUTSIDE, UNKNOWN, AN_APP = 'this app', 'inside', 'outside', 'unknown', 'an app'
+LABEL = re.compile(r'\*[^*\n]+\* \([^()\n]*[^\s()][^()\n]*\):').match
+BROADCAST = re.compile(r'(?<![\w@])@(channel|here|everyone)\b', re.I).search
+LINK = re.compile(r'https?://[^\s<>|]+').findall
 CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
 LINE_BREAKS = re.compile(r'[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]')
 # Not Cn (unassigned): an old Python's tables would take a new emoji for one.
@@ -643,17 +646,40 @@ def top_level_at(ts, tok, channel):
 def reply(ts, path, flags):
     with open(path, encoding='utf-8') as source:
         text = source.read().strip()
-    if not text or '<@' in text or '<!' in text or len(text) > 3500:
+    if not text or '<@' in text or '<!' in text or BROADCAST(text) or len(text) > 3500:
         sys.exit('Not posted: a reply needs some text, mentions nobody and fits one message.')
     if not TIMESTAMP(ts):
-        sys.exit('Not posted: the first argument is the ticket\'s timestamp, as printed by --answers (like 1700000000.000100).')
+        sys.exit("Not posted: the first argument is the thread's timestamp, as printed by --answers or --talk (like 1700000000.000100).")
     channel = channel_id()
+    try:
+        tok = token()
+    except SystemExit:
+        if '--post' in flags:
+            raise
+        tok = None  # the dry run still shows the text without a token
+    top = None
+    if tok:
+        top, why = top_level_at(ts, tok, channel)
+        if not top:
+            sys.exit(f'Not posted: {why}')
+        if not is_ticket(top) and not LABEL(text):
+            sys.exit('Not posted: a reply outside a ticket\'s thread goes out under the app\'s name, so it starts with a bold '
+                     'label and the name it speaks for, like "*Reply* (Jo Tester): ".')
     if '--post' not in flags:
-        print(f'--- reply in the thread of {ts}\n{text}\n\nDry run for {channel}, nothing posted. Add --post to post.')
+        print(f'--- reply in the thread of {ts}')
+        if top:
+            people = People(tok, recall()['names'], us(tok))
+            total = top['reply_count'] if isinstance(top.get('reply_count'), int) else 0
+            print(f'It starts with: {when(ts)} | {"a ticket" if is_ticket(top) else "not a ticket"} | thread {total} | '
+                  f'{people.side(top)}: {cut(people.name(top.get("user")), FIELD_LENGTH)}')
+            print('  ' + cut(one_line(people.plain(top.get('text'), look_up=False)), HINT_LENGTH))
+        else:
+            print('Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.')
+        print(f'--- the reply\n{text}')
+        if LINK(text):
+            print('Links in it: ' + ' '.join(LINK(text)))
+        print(f'\nDry run for {channel}, nothing posted. Add --post to post.')
         return
-    tok = token()
-    if not ticket_at(ts, tok, channel):
-        sys.exit('Not posted: that timestamp is not a ticket in this channel.')
     sent = call('chat.postMessage', tok, channel=channel, thread_ts=ts, text=text, unfurl_links=False, unfurl_media=False)
     print(f'Replied in the thread of {ts} ({sent["ts"]}).')
 

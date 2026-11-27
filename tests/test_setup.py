@@ -297,6 +297,14 @@ class SetupMessageTests(TicketsTestCase):
         self.assertTrue(any(line.startswith('The ticket list could not be read: ') and line.endswith('tickets.py --setup prints the steps.')
                             for line in out.splitlines()))
 
+    def test_a_reply_dry_run_without_a_token_shows_the_text(self):
+        note = self.write('note.txt', '*Reply* (Jo): x')
+        code, out = run_cli(['--reply', '1700000000.000100', note], channel=CHANNEL)
+        lines = out.splitlines()
+        self.assertEqual(code, 0)
+        self.assertIn('Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.', lines)
+        self.assertEqual(lines[-1], f'Dry run for {CHANNEL}, nothing posted. Add --post to post.')
+
     def test_check_without_a_token_names_the_channel_then_the_setup(self):
         code, out = run_cli(['--check'], channel='C0123456789')
         self.assertEqual(code, 1)

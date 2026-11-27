@@ -24,6 +24,8 @@ CLOSED_BY_US = [{'name': 'white_check_mark', 'users': [BOT], 'count': 1}]
 STRANGERS = [{'name': 'white_check_mark', 'users': [ANN], 'count': 1}]
 US = {'ok': True, 'user_id': BOT, 'bot_id': APP}
 OLD_TOP = '*Q: {question}*\nUrgency: 🔴 Blocking\nOur decision: We will ship.\nContext: Why it matters.'
+LABEL_REFUSAL = ("Not posted: a reply outside a ticket's thread goes out under the app's name, so it starts with a bold "
+                 'label and the name it speaks for, like "*Reply* (Jo Tester): ".')
 
 
 def top(question='Can we ship on Friday?', by='Jo Tester'):
@@ -599,16 +601,25 @@ class ReplyTests(SlackTestCase):
         return self.write('note.txt', text)
 
     def test_a_dry_run_prints_the_text_and_posts_nothing(self):
+        self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1)]})
+        self.slack.respond('auth.test', US)
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': 'Tickets'}})
         result = self.run_main('--reply', T1, self.note('  We will go ahead with the default.\n'))
         self.assertIsNone(result.code)
-        self.assertEqual(result.out, f'--- reply in the thread of {T1}\nWe will go ahead with the default.\n\n'
-                                     f'Dry run for {CHANNEL}, nothing posted. Add --post to post.\n')
-        self.assertEqual(self.slack.calls, [])
+        lines = lines_of(result.out)
+        self.assertEqual(lines[0], f'--- reply in the thread of {T1}')
+        self.assertRegex(lines[1], r'^It starts with: .+ \| a ticket \| thread 0 \| this app: Tickets$')
+        self.assertTrue(lines[2].startswith('  *Q: Can we ship on Friday?*'), lines[2])
+        self.assertEqual(lines[3:], ['--- the reply', 'We will go ahead with the default.', '',
+                                     f'Dry run for {CHANNEL}, nothing posted. Add --post to post.'])
+        self.assertNotIn('chat.postMessage', self.slack.methods())
 
     def test_a_reply_that_is_refused(self):
         refused = {
             'a mention': '<@U0000000001> please look',
             'a broadcast': '<!here> look',
+            'a broadcast word': 'Hi @here, look',
+            'a broadcast word in capitals': '@Channel please',
             'an empty text': '  \n ',
             'a text that is too long': 'x' * 3501,
         }
@@ -623,33 +634,34 @@ class ReplyTests(SlackTestCase):
         for ts in ('123', '1700000000', '1700000000.1', 'abc.def', '1700000000.000100x', ARABIC_INDIC_TS):
             with self.subTest(ts=ts):
                 result = self.run_main('--reply', ts, self.note('Fine text'), '--post')
-                self.assertTrue(str(result.code).startswith("Not posted: the first argument is the ticket's timestamp"))
+                self.assertTrue(str(result.code).startswith("Not posted: the first argument is the thread's timestamp"))
                 self.assertEqual(self.slack.calls, [])
 
-    def test_a_timestamp_whose_parent_is_not_a_ticket_is_refused(self):
+    def test_a_reply_outside_a_ticket_without_whose_words_is_refused(self):
+        in_thread = f"Not posted: that timestamp is a reply in the thread of {T2}. Use {T2}, the thread's top-level message."
         parents = {
-            'chatter': {'ts': T1, 'text': 'Good morning'},
-            'a reply inside a thread': {'ts': T2, 'text': '*Q: Something?*'},
-            'a message that only starts like one': {'ts': T1, 'text': '*Q:* anyone?'},
+            'chatter': ({'ts': T1, 'text': 'Good morning'}, LABEL_REFUSAL),
+            'a reply inside a thread': ({'ts': T2, 'text': '*Q: Something?*'}, in_thread),
+            'a message that only starts like one': ({'ts': T1, 'text': '*Q:* anyone?'}, LABEL_REFUSAL),
         }
-        for why, parent in parents.items():
+        for why, (parent, refusal) in parents.items():
             with self.subTest(why=why):
                 self.slack.calls.clear()
                 self.slack.respond('conversations.replies', {'ok': True, 'messages': [parent]})
                 result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
-                self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
+                self.assertEqual(result.code, refusal)
                 self.assertEqual(self.slack.methods(), ['conversations.replies'])
 
     def test_an_empty_answer_is_not_a_ticket(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': []})
         result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
-        self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
+        self.assertEqual(result.code, 'Not posted: that timestamp is not a message in this channel.')
         self.assertEqual(self.slack.methods(), ['conversations.replies'])
 
     def test_a_reply_in_a_thread_is_refused_even_when_it_reads_like_a_ticket(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, thread_ts=T2)]})
         result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
-        self.assertEqual(result.code, 'Not posted: that timestamp is not a ticket in this channel.')
+        self.assertEqual(result.code, f"Not posted: that timestamp is a reply in the thread of {T2}. Use {T2}, the thread's top-level message.")
         self.assertEqual(self.slack.methods(), ['conversations.replies'])
 
     def test_a_reply_to_an_old_format_ticket_is_posted(self):
