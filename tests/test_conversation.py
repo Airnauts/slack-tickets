@@ -688,8 +688,10 @@ class ReplyAnyThreadTests(ConversationTestCase):
     def test_a_reply_to_conversation_is_posted_in_its_thread(self):
         result = self.reply('*Reply* (Jo Tester): XLSX only.', '--post')
         self.assertIsNone(result.code)
-        self.assertEqual(result.out, f'Replied in the thread of {ASK} ({at(9)}).\n')
-        self.assertEqual(self.slack.methods(), ['conversations.replies', 'chat.postMessage'])
+        lines = lines_of(result.out)
+        self.assertRegex(lines[0], r'^It starts with: [A-Z][a-z]{2} \d\d \d\d:\d\d \| not a ticket \| thread 2 \| outside: Ann Client$')
+        self.assertEqual(lines[1:], ['  Which export formats do you support?', f'Replied in the thread of {ASK} ({at(9)}).'])
+        self.assertEqual(self.slack.methods(), ['conversations.replies', 'auth.test', 'users.info', 'chat.postMessage'])
         self.assertEqual(self.slack.made('chat.postMessage')[0], {
             'channel': CHANNEL, 'thread_ts': ASK, 'text': '*Reply* (Jo Tester): XLSX only.',
             'unfurl_links': False, 'unfurl_media': False})
@@ -772,6 +774,42 @@ class ReplyAnyThreadTests(ConversationTestCase):
         for char in HIDDEN:
             self.assertNotIn(char, out)
         self.assertIn('Question ok', out)
+
+
+    def test_the_post_shows_the_message_as_it_is_when_posted(self):
+        self.assertIsNone(self.reply('*Reply* (Jo): x').code)
+        self.threads[ASK][0]['text'] = 'Something else entirely'
+        lines = lines_of(self.reply('*Reply* (Jo): x', '--post').out)
+        self.assertEqual(lines[1], '  Something else entirely')
+        self.assertEqual(lines[-1], f'Replied in the thread of {ASK} ({at(9)}).')
+
+    def test_nothing_is_posted_when_a_lookup_for_the_target_fails(self):
+        self.refuse_lookups('missing_scope')
+        self.assertEqual(self.reply('*Reply* (Jo): x', '--post').code, 'users.info: missing_scope')
+        self.assertNotIn('chat.postMessage', self.slack.methods())
+
+    def test_a_reply_with_crlf_line_ends_is_posted_with_newlines(self):
+        self.assertIsNone(self.reply('*Reply* (Jo): one\r\ntwo\r\n', '--post').code)
+        self.assertEqual(self.slack.made('chat.postMessage')[0]['text'], '*Reply* (Jo): one\ntwo')
+        self.assertEqual(lines_of(self.reply('*Reply* (Jo): one\r\ntwo').out)[-5:-2], ['--- the reply', '*Reply* (Jo): one', 'two'])
+
+    def test_every_link_target_is_listed_once_in_the_order_found(self):
+        self.patch(self.tickets, 'token', side_effect=SystemExit('No Slack token: set it'))
+        table = (
+            ('<HTTPS://x.example/a|click>', ['HTTPS://x.example/a']),
+            ('<mailto:ann@x.example|mail us>', ['mailto:ann@x.example']),
+            ('call <tel:+48123456789>', ['tel:+48123456789']),
+            ('<slack://channel?team=T1&id=C1|open>', ['slack://channel?team=T1&id=C1']),
+            ('<ftp+x.1://h/p>', ['ftp+x.1://h/p']),
+            ('see HTTP://B.example then <https://a.example|a> and https://a.example and <https://a.example|again>',
+             ['HTTP://B.example', 'https://a.example']),
+            ('no scheme: <#C0000000000> and <C0000000000|x>', []),
+        )
+        for text, links in table:
+            with self.subTest(text=text):
+                lines = lines_of(self.reply('*Reply* (Jo): ' + text).out)
+                found = [line for line in lines if line.startswith('Links in it: ')]
+                self.assertEqual(found, ['Links in it: ' + ' '.join(links)] if links else [])
 
 
 if __name__ == '__main__':

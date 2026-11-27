@@ -62,8 +62,11 @@ THREAD_LENGTH = 1500
 THREAD_PAGES = 10
 THIS_APP, INSIDE, OUTSIDE, UNKNOWN, AN_APP = 'this app', 'inside', 'outside', 'unknown', 'an app'
 LABEL = re.compile(r'\*[^*\n]+\* \([^()\n]*[^\s()][^()\n]*\):').match
-BROADCAST = re.compile(r'(?<![\w@])@(channel|here|everyone)\b', re.I).search
-LINK = re.compile(r'https?://[^\s<>|]+').findall
+# An underscore may stand beside the word (_@here_ is italic), a letter or digit before it makes an address.
+BROADCAST = re.compile(r'(?<![^\W_]|@)@(channel|here|everyone|group)(?![^\W_])', re.I).search
+LINK = re.compile(r'<([a-z][a-z0-9+.-]*:[^|>\s]*)(?:\|[^>]*)?>|(https?://[^\s<>|]+)', re.I).finditer
+FLAGS = frozenset(('--list', '--answers', '--all', '--peek', '--talk', '--thread', '--reply', '--close', '--post', '--check', '--setup',
+                   '--sources', '--sources-template'))
 CONTROLS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]')
 LINE_BREAKS = re.compile(r'[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]')
 # Not Cn (unassigned): an old Python's tables would take a new emoji for one.
@@ -664,8 +667,11 @@ def top_level_at(ts, tok, channel):
 
 
 def reply(ts, path, flags):
-    with open(path, encoding='utf-8') as source:
-        text = source.read().strip()
+    with open(path, encoding='utf-8', newline='') as source:  # a lone carriage return is not turned into a newline here
+        text = source.read().replace('\r\n', '\n')
+    if clean(text) != text:
+        sys.exit('Not posted: the reply holds characters that cannot be seen. Type it again as plain text.')
+    text = text.strip()
     if not text or '<@' in text or '<!' in text or BROADCAST(text) or len(text) > 3500:
         sys.exit('Not posted: a reply needs some text, mentions nobody and fits one message.')
     if not TIMESTAMP(ts):
@@ -685,17 +691,19 @@ def reply(ts, path, flags):
         if not is_ticket(top) and not LABEL(text):
             sys.exit('Not posted: a reply outside a ticket\'s thread goes out under the app\'s name, so it starts with a bold '
                      'label and the name it speaks for, like "*Reply* (Jo Tester): ".')
-    if '--post' not in flags:
+    dry = '--post' not in flags
+    if dry:
         print(f'--- reply in the thread of {ts}')
-        if top:
-            people = People(tok, recall()['names'], us(tok))
-            print(f'It starts with: {when(ts)} | {"a ticket" if is_ticket(top) else "not a ticket"} | '
-                  f'thread {thread_size(top, 0)} | {people.who(top)}')
-            print('  ' + cut(one_line(people.plain(top.get('text'), look_up=False)), HINT_LENGTH))
-        else:
-            print('Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.')
+    if top:
+        people = People(tok, recall()['names'], us(tok))
+        print(f'It starts with: {when(ts)} | {"a ticket" if is_ticket(top) else "not a ticket"} | '
+              f'thread {thread_size(top, 0)} | {people.who(top)}')
+        print('  ' + cut(one_line(people.plain(top.get('text'), look_up=False)), HINT_LENGTH))
+    elif dry:
+        print('Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.')
+    if dry:
         print(f'--- the reply\n{text}')
-        links = LINK(text)
+        links = list(dict.fromkeys(found.group(1) or found.group(2) for found in LINK(text)))
         if links:
             print('Links in it: ' + ' '.join(links))
         print(f'\nDry run for {channel}, nothing posted. Add --post to post.')
@@ -980,6 +988,8 @@ def show_thread(ts):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     flags = {a for a in sys.argv[1:] if a.startswith('--')}
+    if any(flag not in FLAGS and not flag.startswith('--channel=') for flag in flags):
+        sys.exit(__doc__)
     if '--setup' in flags:
         setup()
     elif '--sources-template' in flags:

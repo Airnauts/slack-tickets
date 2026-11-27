@@ -630,6 +630,29 @@ class ReplyTests(SlackTestCase):
                     self.assertTrue(str(result.code).startswith('Not posted: a reply needs some text'), result)
                     self.assertEqual(self.slack.calls, [])
 
+    def test_a_reply_with_characters_that_cannot_be_seen_is_refused(self):
+        refused = {'a zero-width space': '\u200b', 'an escape': '\x1b', 'a tag character': '\U000e0041', 'a lone carriage return': '\r',
+                   'a vertical tab': '\x0b', 'a line separator': '\u2028', 'a soft hyphen': '\u00ad'}
+        for why, char in refused.items():
+            for flags in ((), ('--post',)):
+                with self.subTest(why=why, flags=flags):
+                    result = self.run_main('--reply', T1, self.note(f'Fine{char} text'), *flags)
+                    self.assertEqual(result.code, 'Not posted: the reply holds characters that cannot be seen. Type it again as plain text.')
+                    self.assertEqual(self.slack.calls, [])
+
+    def test_the_broadcast_words_are_found_whatever_stands_around_them(self):
+        found = ['@here', 'Hi @Here, look', '_@here_', '*@channel*', '~@everyone~', '@group', 'to @Group: hi', '_@group', 'x _@everyone_ y']
+        absent = ['ann@everyone.example', 'ann@group.example', 'ann@here', '@herex', '@@here', 'a@channel', 'at here']
+        for text in found:
+            with self.subTest(found=text):
+                self.assertTrue(self.tickets.BROADCAST(text))
+        for text in absent:
+            with self.subTest(absent=text):
+                self.assertFalse(self.tickets.BROADCAST(text))
+        result = self.run_main('--reply', T1, self.note('Fine _@here_ text'))
+        self.assertTrue(str(result.code).startswith('Not posted: a reply needs some text'), result)
+        self.assertEqual(self.slack.calls, [])
+
     def test_a_malformed_timestamp_is_refused(self):
         for ts in ('123', '1700000000', '1700000000.1', 'abc.def', '1700000000.000100x', ARABIC_INDIC_TS):
             with self.subTest(ts=ts):
@@ -667,16 +690,23 @@ class ReplyTests(SlackTestCase):
     def test_a_reply_to_an_old_format_ticket_is_posted(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1, OLD_TOP.format(question='Can we ship?'))]})
         self.slack.respond('chat.postMessage', {'ok': True, 'ts': '1700000900.000100', 'channel': CHANNEL})
+        self.slack.respond('auth.test', US)
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': 'Tickets'}})
         result = self.run_main('--reply', T1, self.note('Fine text'), '--post')
         self.assertIn('Replied in the thread of', result.out)
 
     def test_a_reply_to_a_ticket_is_posted_in_its_thread(self):
         self.slack.respond('conversations.replies', {'ok': True, 'messages': [ticket(T1)]})
         self.slack.respond('chat.postMessage', {'ok': True, 'ts': '1700000900.000100', 'channel': CHANNEL})
+        self.slack.respond('auth.test', US)
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': 'Tickets'}})
         result = self.run_main('--reply', T1, self.note('*Update* (Jo, today): we went ahead.\n'), '--post')
         self.assertIsNone(result.code)
-        self.assertEqual(result.out, f'Replied in the thread of {T1} (1700000900.000100).\n')
-        self.assertEqual(self.slack.methods(), ['conversations.replies', 'chat.postMessage'])
+        lines = lines_of(result.out)
+        self.assertRegex(lines[0], r'^It starts with: .+ \| a ticket \| thread 0 \| this app: Tickets$')
+        self.assertTrue(lines[1].startswith('  *Q: Can we ship on Friday?*'), lines[1])
+        self.assertEqual(lines[2:], [f'Replied in the thread of {T1} (1700000900.000100).'])
+        self.assertEqual(self.slack.methods(), ['conversations.replies', 'auth.test', 'users.info', 'chat.postMessage'])
         self.assertEqual(self.slack.made('conversations.replies')[0]['ts'], T1)
         self.assertEqual(self.slack.made('chat.postMessage')[0], {
             'channel': CHANNEL, 'thread_ts': T1, 'text': '*Update* (Jo, today): we went ahead.',
@@ -950,6 +980,21 @@ class MainTests(SlackTestCase):
                 self.assertEqual(result.code, self.tickets.__doc__)
                 self.assertEqual(result.out, '')
                 self.assertEqual(self.slack.calls, [])
+
+    def test_a_flag_the_script_does_not_know_prints_the_usage_before_anything_is_read_or_posted(self):
+        batch = self.write_json('batch.json', {'tickets': []})
+        for argv in (('--talk=1', batch, '--post'), ('--peak',), ('--talk', '--peak'), ('--answers', '--al'), ('--list', '--bogus'),
+                     ('--channel', '--list'), ('--thread', T1, '--all=1'), (batch, '--post', '--force'), ('--', '--list')):
+            with self.subTest(argv=argv):
+                result = self.run_main(*argv)
+                self.assertEqual(result.code, self.tickets.__doc__)
+                self.assertEqual(result.out, '')
+                self.assertEqual(self.slack.calls, [])
+
+    def test_every_flag_the_script_knows_is_still_accepted(self):
+        for flags in (('--setup',), ('--sources-template',), ('--sources',), ('--setup', f'--channel={OTHER_CHANNEL}')):
+            with self.subTest(flags=flags):
+                self.assertIsNone(self.run_main(*flags).code)
 
     def test_the_channel_flag_works_in_process_too(self):
         del os.environ['SLACK_TICKETS_CHANNEL']
