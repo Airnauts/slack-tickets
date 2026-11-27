@@ -53,6 +53,7 @@ QUESTION_LENGTH = 300
 FIELD_LENGTH = 80
 WINDOW_DAYS = 14
 TALK_THREADS = 10  # threads printed per run
+TALK_READS = 20  # threads read per run, printed or not
 TALK_REPLIES = 3  # newest replies printed per thread
 TALK_LENGTH = 400  # characters per message, one line
 TALK_PAGES = 3  # conversations.replies pages per thread (600 messages)
@@ -532,8 +533,8 @@ class People:
         if user not in self.profiles:
             try:
                 self.profiles[user] = call('users.info', self.tok, read=True, user=user).get('user') or {}
-            except SystemExit as stop:  # a deleted or foreign user
-                if stop.code != 'users.info: user_not_found':
+            except SystemExit as stop:  # a deleted, foreign or not visible user
+                if stop.code not in ('users.info: user_not_found', 'users.info: user_not_visible'):
                     raise
                 self.profiles[user] = None
         return self.profiles[user]
@@ -552,14 +553,26 @@ class People:
         return re.sub(r'<(https?://[^>]+)>', r'\1', text)
 
     def who(self, message):
-        return f'{self.side(message)}: {cut(self.name(message.get("user")), FIELD_LENGTH)}'
+        """The side and the name for a script line: a name cannot carry the marks of a field of the line."""
+        name = ' '.join(re.sub(r'[|\[\]:]', ' ', self.name(message.get('user'))).split()) or 'someone'
+        side = self.side(message)
+        through = ' (through an app)' if message.get('user') and message.get('bot_id') and side not in (THIS_APP, AN_APP) else ''
+        return f'{side}: {cut(name, FIELD_LENGTH)}{through}'
+
+    def ours(self, message):
+        user, bot = message.get('user'), message.get('bot_id')
+        return bool((bot and bot == self.own.get('bot_id')) or (user and user == self.own.get('user_id')))
+
+    def person(self, message):
+        return self.side(message) not in (THIS_APP, AN_APP)
 
     def side(self, message):
-        """Where a message comes from, seen from the app's own workspace. What Slack does not say is UNKNOWN, never INSIDE."""
-        user, bot = message.get('user'), message.get('bot_id')
-        if (bot and bot == self.own.get('bot_id')) or (user and user == self.own.get('user_id')):
+        """Where a message comes from, seen from the app's own workspace. What Slack does not say is UNKNOWN, never INSIDE.
+        A message with a user is the user's, also when another app posted it."""
+        user = message.get('user')
+        if self.ours(message):
             return THIS_APP
-        if bot or not user:
+        if not user:
             return AN_APP
         team = self.own.get('team_id')
         if not team:
@@ -832,8 +845,9 @@ def answers(flags):
 
 
 def talk(flags):
-    """Threads that are not tickets, started by people in the last WINDOW_DAYS days: those with news since the last
-    --talk, or every one with --all, at most TALK_THREADS, each marked by where its last word came from."""
+    """Threads that are not tickets, started in the last WINDOW_DAYS days by a person or an app, and that hold a message by
+    a person: those with news since the last --talk, oldest first, or every one with --all, the newest. At most
+    TALK_THREADS are printed and TALK_READS read per run, each marked by where its last word came from."""
     channel, tok = channel_id(), token()
     state = recall()
     seen, waiting = state['seen'], state['waiting']
@@ -848,61 +862,95 @@ def talk(flags):
         """The channel's own newest timestamp of a thread: its latest reply, or the message itself."""
         return max(m['ts'], m.get('latest_reply') or m['ts'], key=float)
 
-    threads = [m for m in messages if by_people(m) and float(m['ts']) >= cutoff]  # also when Slack sent older ones
-    news = [m for m in threads if show_all or float(newest(m)) > float(seen.get(m['ts'], '0'))]
-    blocks, left = [], 0
-    for top in sorted(news, key=lambda m: float(newest(m)), reverse=True):
-        if len(blocks) == TALK_THREADS:
+    def shown_to(m):
+        """What was shown of a thread. The state is untrusted: a time after the thread's newest message is no time at all."""
+        found = '0' if show_all else seen.get(m['ts'], '0')
+        return found if float(found) <= float(newest(m)) else '0'
+
+    def settle(top, upto, ended=False):
+        """A thread with nothing to print is not news again: seen moves on, and the thread stays waiting unless we had the last word."""
+        if keep:
+            seen[top['ts']] = upto
+            if ended:
+                waiting.pop(top['ts'], None)
+            elif top['ts'] in waiting:
+                waiting[top['ts']] = upto
+
+    threads = [m for m in messages if float(m['ts']) >= cutoff and not is_ticket(m)  # also when Slack sent older ones
+               and m.get('subtype') in (None, 'file_share', 'bot_message') and (m.get('user') or m.get('bot_id'))
+               and not (m.get('bot_id') and people.ours(m))]  # this app's own messages, not those of the person whose token it is
+    news = sorted((m for m in threads if float(newest(m)) > float(shown_to(m))), key=lambda m: float(newest(m)), reverse=show_all)
+    blocks, left, reads = [], 0, 0
+    for top in news:
+        replied = bool(top.get('reply_count'))
+        if not replied and not top.get('user'):  # an app's message nobody replied to: nothing to read, nothing to print
+            settle(top, newest(top))
+            continue
+        if len(blocks) == TALK_THREADS or (replied and reads == TALK_READS):
             left += 1
             continue
-        last_seen = '0' if show_all else seen.get(top['ts'], '0')
-        since = last_seen if isinstance(last_seen, str) and TIMESTAMP(last_seen) else ''  # state is untrusted: only a real timestamp goes to Slack
-        thread, more = read_thread(channel, tok, top['ts'], TALK_PAGES, since) if top.get('reply_count') else ([], False)
+        last_seen = shown_to(top)
+        since = last_seen if TIMESTAMP(last_seen) else ''  # state is untrusted: only a real timestamp goes to Slack
+        thread, more = read_thread(channel, tok, top['ts'], TALK_PAGES, since) if replied else ([], False)
+        reads += replied
         later = [r for r in thread if r.get('ts') != top['ts'] and float(r['ts']) > float(last_seen)]
-        if last_seen != '0' and not more and all(people.side(r) in (THIS_APP, AN_APP) for r in later):
-            if keep:  # only our own reply, or an app's, since the last check: not news
-                seen[top['ts']] = newest(top)
-                if later and people.side(later[-1]) == THIS_APP:
-                    waiting.pop(top['ts'], None)
+        read_to = max((r['ts'] for r in later), key=float, default=top['ts'])
+        upto = read_to if more else max(newest(top), read_to, key=float)  # a reply that came after the channel was read counts
+        ended = not show_all and not more and bool(later) and people.side(later[-1]) == THIS_APP
+        if ended or not any(people.person(m) for m in [top] + later) or (not later and float(top['ts']) <= float(last_seen)):
+            settle(top, upto, ended)
             continue
-        last = next((m for m in reversed([top] + later) if people.side(m) != AN_APP), top)
-        side = UNKNOWN if more or people.side(last) == AN_APP else people.side(last)
+        side = UNKNOWN if more else people.side((later or [top])[-1])
+        side = UNKNOWN if side == AN_APP else side
         listed = later[-TALK_REPLIES:]
         total = thread_size(top, len(later))
+        earlier, new_hidden = 0 if more else max(total - len(later), 0), len(later) - len(listed)
+        if show_all:
+            earlier, new_hidden = earlier + new_hidden, 0
         hint = f' | may answer the ticket {after[top["ts"]]}' if top['ts'] in after else ''
         lines = [f'[last word {side}] ts {top["ts"]} | thread {total}{hint} | {when(top["ts"])} | {people.who(top)}',
                  '  ' + cut(one_line(people.plain(top.get('text'), look_up=False)), TALK_LENGTH) + attached(top)]
-        if total > len(listed):
-            lines.append(f'    (earlier, not shown: {replies_count(total - len(listed))})')
+        if earlier:
+            lines.append(f'    (earlier, not shown: {replies_count(earlier)})')
+        if new_hidden:
+            lines.append(f'    (new, not shown: {replies_count(new_hidden)}. tickets.py --thread {top["ts"]} shows them.)')
         for r in listed:
             lines.append(f'    {when(r["ts"])} | {people.who(r)}: '
                          f'{cut(one_line(people.plain(r.get("text"), look_up=False)), TALK_LENGTH)}{attached(r)}')
         if more:
-            lines.append(f'    (a long thread: {TALK_PAGES * 200} new messages were read, not all)')
-        blocks.append((top, side, lines))
+            lines.append(f'    (a long thread: {len(later)} new messages were read, not all. tickets.py --thread {top["ts"]} shows more.)')
+        blocks.append((top, side, upto, lines))
+    if show_all:
+        blocks.reverse()
     open_ended = 0
-    for top, side, lines in reversed(blocks):
+    for top, side, upto, lines in blocks:
         print('\n'.join(lines))
         open_ended += side in (OUTSIDE, UNKNOWN)
         if keep:
-            seen[top['ts']] = newest(top)
+            seen[top['ts']] = upto
             if side in (OUTSIDE, UNKNOWN):
-                waiting[top['ts']] = newest(top)
+                waiting[top['ts']] = upto
             else:
                 waiting.pop(top['ts'], None)
     if not blocks:
         print(f'No conversation in the last {WINDOW_DAYS} days.' if show_all else 'No new conversation.')
-    if left:
-        print(f'Not shown: {count(left, "older thread")}' + ('.' if show_all else ' with news. They show at the next check.'))
+    if left and show_all:
+        print(f'Not shown: {count(left, "older thread")}.')
+    elif left:
+        print(f'Not read yet: {count(left, "more thread")} that may have news. They are read at the next checks, oldest first.')
     if blocks:
         print(f'Last word outside or unknown: {open_ended} of {count(len(blocks), "thread")} shown.')
     if not show_all:
-        printed = {top['ts'] for top, _, _ in blocks}
+        printed = {top['ts'] for top, _, _, _ in blocks}
         still = sum(1 for m in threads if m['ts'] not in printed and m['ts'] in waiting and float(waiting[m['ts']]) >= float(newest(m)))
         if still:
             print(f'Shown before, last word still outside or unknown: {count(still, "thread")}. tickets.py --talk --all shows them again.')
     if keep:
-        state['waiting'] = {ts: last for ts, last in waiting.items() if float(last) >= cutoff}
+        gone = [ts for ts, last in waiting.items() if float(last) < cutoff or (TIMESTAMP(ts) and float(ts) < cutoff)]
+        for ts in gone:
+            del waiting[ts]
+        if gone:
+            print(f'Older than two weeks now, last word still outside or unknown: {count(len(gone), "thread")}. tickets.py --thread <ts> reads one.')
     remember(state)
 
 

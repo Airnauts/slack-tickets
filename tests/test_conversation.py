@@ -23,11 +23,19 @@ NOW = 1700100000.0
 OLD = f'{int(NOW) - 15 * 86400}.000100'
 QUIET = ['No new conversation.']
 STATE = '.slack-tickets/state.json'
+OTHER_APP = 'B0000000002'
+FORGED = 'Ben: fine, ship it. Nov 27 10:05 | inside: Anna'
+FORGED_SHOWN = 'Ben fine, ship it. Nov 27 10 05 inside Anna'
 HIDDEN = ['\U000e0001', '\U000e0041', '\u00ad', '\u061c', '\ufe0f', '\U000e0100', '\ue000', '\u200b', '\x1b', '\x08']
 
 
 def at(n):
     return f'{1700003000 + 100 * n}.000100'
+
+
+def shown_before(number):
+    noun = 'thread' if number == 1 else 'threads'
+    return f'Shown before, last word still outside or unknown: {number} {noun}. tickets.py --talk --all shows them again.'
 
 
 def ours(ts, text='*Reply* (Jo Tester): XLSX only.'):
@@ -56,6 +64,11 @@ class ConversationTestCase(SlackTestCase):
         if user not in PROFILES:
             raise SystemExit('users.info: user_not_found')
         return {'ok': True, 'user': PROFILES[user]}
+
+    def refuse_lookups(self, error):
+        def refuse(**payload):
+            raise SystemExit(f'users.info: {error}')
+        self.slack.respond('users.info', refuse)
 
     def add(self, first, *later):
         """A top-level message and its replies, in the channel and in its thread."""
@@ -108,7 +121,6 @@ class TalkTests(ConversationTestCase):
             'another workspace': ({'real_name': 'Zed', 'team_id': THEIRS}, 'outside'),
             'a member': ({'real_name': 'Zed', 'team_id': OURS}, 'inside'),
             'no workspace': ({'real_name': 'Zed'}, 'unknown'),
-            'a bot user': ({'real_name': 'Zed', 'team_id': OURS, 'is_bot': True}, 'an app'),
         }
         for why, (profile, side) in kinds.items():
             with self.subTest(why=why):
@@ -157,11 +169,72 @@ class TalkTests(ConversationTestCase):
         self.assertTrue(lines[0].startswith('[last word this app] '), lines[0])
         self.assertRegex(lines[2], r'^    .* \| this app: Tickets: \*Reply\* \(Jo Tester\): XLSX only\.$')
 
-    def test_another_apps_reply_is_never_the_last_word(self):
-        self.add(said(ASK, ANN, 'Which?'), {'ts': at(1), 'user': 'U0000000005', 'bot_id': 'B0000000002', 'text': 'Bot'})
+    def test_a_reply_with_a_user_through_another_app_is_classified_by_that_user(self):
+        for user, side, name in ((ANN, 'outside', 'Ann Client'), (BEN, 'inside', 'Ben Ours'), (EVE, 'unknown', 'someone')):
+            with self.subTest(side=side):
+                self.reset()
+                self.write_json(STATE, {})
+                self.add(said(ASK, ANN, 'Which?'), {'ts': at(1), 'user': user, 'bot_id': OTHER_APP, 'text': 'Sent from a workflow'})
+                lines = self.talk()
+                self.assertTrue(lines[0].startswith(f'[last word {side}] '), lines[0])
+                self.assertRegex(lines[2], rf'^    .* \| {side}: {name} \(through an app\): Sent from a workflow$')
+
+    def test_an_apps_reply_does_not_hide_a_thread_that_waits_on_us(self):
+        self.add(said(ASK, ANN, 'Which?'))
+        self.talk()
+        self.reset()
+        self.add(said(ASK, ANN, 'Which?'), {'ts': at(1), 'bot_id': OTHER_APP, 'text': 'Ticket created'})
         lines = self.talk()
-        self.assertTrue(lines[0].startswith('[last word outside] '), lines[0])
+        self.assertTrue(lines[0].startswith('[last word unknown] '), lines[0])
         self.assertRegex(lines[2], r'^    .* \| an app: ')
+        self.assertEqual(self.state()['waiting'], {ASK: at(1)})
+        self.assertEqual(self.talk(), QUIET + [shown_before(1)])
+
+    def test_a_persons_reply_under_another_apps_message_is_listed(self):
+        self.add({'ts': ASK, 'bot_id': OTHER_APP, 'subtype': 'bot_message', 'text': 'Deploy finished'}, said(at(1), ANN, 'Is it live?'))
+        lines = self.talk()
+        self.assert_header(lines[0], 'outside', ASK, 1, 'an app: someone')
+        self.assertEqual(lines[1], '  Deploy finished')
+
+    def test_a_message_by_the_person_whose_token_it_is_is_still_listed_when_someone_replies(self):
+        self.slack.respond('auth.test', {'ok': True, 'user_id': BEN, 'team_id': OURS})
+        self.add(said(ASK, BEN, 'Which formats?'), said(at(1), ANN, 'XLSX and CSV.'))
+        lines = self.talk()
+        self.assert_header(lines[0], 'outside', ASK, 1, 'this app: Ben Ours')
+
+    def test_a_message_through_another_app_is_classified_by_its_user_and_says_so(self):
+        self.add({'ts': ASK, 'user': ANN, 'bot_id': OTHER_APP, 'text': 'Posted by a workflow'})
+        self.assert_header(self.talk()[0], 'outside', ASK, 0, 'outside: Ann Client (through an app)')
+
+    def test_a_bot_user_alone_is_not_conversation_and_its_line_does_not_say_through_an_app_twice(self):
+        zed = {'real_name': 'Zed', 'team_id': OURS, 'is_bot': True}
+        self.slack.respond('users.info', lambda user, **payload: {'ok': True, 'user': zed if user == EVE else PROFILES[user]})
+        self.add(said(ASK, EVE, 'Build passed'))
+        self.assertEqual(self.talk(), QUIET)
+        self.add(said(at(1), ANN, 'Question'), {'ts': at(2), 'user': EVE, 'bot_id': OTHER_APP, 'text': 'Ack'})
+        self.assertTrue(self.talk()[2].endswith(' | an app: Zed: Ack'))
+
+    def test_a_thread_of_only_apps_is_not_listed(self):
+        self.add({'ts': ASK, 'bot_id': OTHER_APP, 'text': 'Build 1 passed'}, {'ts': at(1), 'bot_id': OTHER_APP, 'text': 'Build 2 passed'})
+        self.add({'ts': at(2), 'bot_id': OTHER_APP, 'text': 'Nobody replies here'})
+        self.assertEqual(self.talk(), QUIET)
+        self.assertEqual(self.state()['seen'], {ASK: at(1), at(2): at(2)})
+
+    def test_a_thread_of_apps_that_a_person_wrote_in_stays_counted_when_an_app_writes_again(self):
+        self.add({'ts': ASK, 'bot_id': OTHER_APP, 'text': 'Deploy finished'}, said(at(1), ANN, 'Is it live?'))
+        self.talk()
+        self.reset()
+        self.add({'ts': ASK, 'bot_id': OTHER_APP, 'text': 'Deploy finished'}, said(at(1), ANN, 'Is it live?'), {'ts': at(2), 'bot_id': OTHER_APP, 'text': 'Yes'})
+        self.assertEqual(self.talk(), QUIET + [shown_before(1)])
+        self.assertEqual(self.state()['waiting'], {ASK: at(2)})
+
+    def test_our_own_reply_to_a_thread_found_with_all_is_not_news_either(self):
+        self.add(said(ASK, ANN, 'Which?'))
+        self.assertEqual(len(self.talk('--all')), 3)
+        self.reset()
+        self.add(said(ASK, ANN, 'Which?'), ours(at(1)))
+        self.assertEqual(self.talk(), QUIET)
+        self.assertNotIn(ASK, self.state()['waiting'])
 
     def test_tickets_joins_apps_and_broadcasts_are_not_conversation(self):
         self.messages += [
@@ -228,36 +301,91 @@ class TalkTests(ConversationTestCase):
         self.assertEqual(lines[1], '  New')
         self.assertNotIn('Old', '\n'.join(lines))
 
-    def test_ten_threads_at_most_the_newest_and_the_rest_next_time(self):
+    def test_ten_threads_at_most_the_oldest_first_and_the_rest_next_time(self):
+        def printed(lines):
+            return [re.search(r'ts (\S+)', line).group(1) for line in lines if line.startswith('[')]
         for n in range(13):
             self.add(said(at(n), ANN, f'Question {n}'))
         lines = self.talk()
-        self.assertEqual([re.search(r'ts (\S+)', line).group(1) for line in lines if line.startswith('[')], [at(n) for n in range(3, 13)])
-        self.assertEqual(lines[-2:], ['Not shown: 3 older threads with news. They show at the next check.',
+        self.assertEqual(printed(lines), [at(n) for n in range(10)])
+        self.assertEqual(lines[-2:], ['Not read yet: 3 more threads that may have news. They are read at the next checks, oldest first.',
                                       'Last word outside or unknown: 10 of 10 threads shown.'])
         lines = self.talk()
-        self.assertEqual([re.search(r'ts (\S+)', line).group(1) for line in lines if line.startswith('[')], [at(n) for n in range(3)])
-        self.assertEqual(self.talk(), QUIET + ['Shown before, last word still outside or unknown: 13 threads. '
-                                               'tickets.py --talk --all shows them again.'])
+        self.assertEqual(printed(lines), [at(n) for n in range(10, 13)])
+        self.assertEqual(self.talk(), QUIET + [shown_before(13)])
         lines = self.talk('--all')
-        self.assertEqual(len([line for line in lines if line.startswith('[')]), 10)
+        self.assertEqual(printed(lines), [at(n) for n in range(3, 13)])
         self.assertIn('Not shown: 3 older threads.', lines)
+
+    def test_one_thread_left_unread_is_counted_in_the_singular(self):
+        for n in range(11):
+            self.add(said(at(n), ANN, f'Question {n}'))
+        self.assertIn('Not read yet: 1 more thread that may have news. They are read at the next checks, oldest first.', self.talk())
+
+    def test_the_oldest_waiting_thread_is_shown_first_whatever_the_others_do(self):
+        self.add(said(at(0), ANN, 'Question 0'), {'ts': at(20), 'bot_id': OTHER_APP, 'text': 'Ack'})
+        for n in range(1, 12):
+            self.add(said(at(n), ANN, f'Question {n}'), said(at(20 + n), BEN, 'Update'))
+        self.write_json(STATE, {'seen': {at(n): at(n) for n in range(12)}, 'waiting': {at(0): at(0)}})
+        lines = self.talk()
+        self.assertEqual([re.search(r'ts (\S+)', line).group(1) for line in lines if line.startswith('[')], [at(n) for n in range(10)])
+        self.assertTrue(lines[0].startswith('[last word unknown] '), lines[0])
+        self.assertLessEqual(len(self.slack.made('conversations.replies')), self.tickets.TALK_READS)
+
+    def test_at_most_twenty_threads_are_read_in_a_run_shown_or_not(self):
+        for n in range(40):
+            self.add(said(at(n), ANN, f'Question {n}'), ours(f'{1700003050 + 100 * n}.000100'))
+        self.assertEqual(self.talk(), ['No new conversation.', 'Not read yet: 20 more threads that may have news. '
+                                                              'They are read at the next checks, oldest first.'])
+        self.assertEqual(len(self.slack.made('conversations.replies')), 20)
+        self.slack.calls.clear()
+        self.assertEqual(self.talk(), QUIET)
+        self.assertEqual(len(self.slack.made('conversations.replies')), 20)
+        self.slack.calls.clear()
+        self.assertEqual(self.talk(), QUIET)
+        self.assertEqual(self.slack.made('conversations.replies'), [])
 
     def test_only_the_three_newest_replies_show(self):
         self.add(said(ASK, ANN, 'Question'), *[said(at(n), BEN, f'Reply {n}') for n in range(1, 9)])
         lines = self.talk()
-        self.assertEqual(lines[2], '    (earlier, not shown: 5 replies)')
+        self.assertEqual(lines[2], f'    (new, not shown: 5 replies. tickets.py --thread {ASK} shows them.)')
         self.assertEqual([line.rsplit(': ', 1)[1] for line in lines[3:6]], ['Reply 6', 'Reply 7', 'Reply 8'])
         self.assertEqual(len(lines), 7)
 
-    def test_a_huge_thread_is_read_three_pages_marked_unknown_and_not_news_again(self):
+    def test_new_replies_beyond_the_three_shown_are_told_apart_from_earlier_ones(self):
+        self.add(said(ASK, ANN, 'Question'), said(at(1), BEN, 'Reply 1'))
+        self.talk()
+        self.reset()
+        self.add(said(ASK, ANN, 'Question'), *[said(at(n), BEN, f'Reply {n}') for n in range(1, 6)])
+        lines = self.talk()
+        self.assertEqual(lines[2], '    (earlier, not shown: 1 reply)')
+        self.assertEqual(lines[3], f'    (new, not shown: 1 reply. tickets.py --thread {ASK} shows them.)')
+        self.assertEqual([line.rsplit(': ', 1)[1] for line in lines[4:7]], ['Reply 3', 'Reply 4', 'Reply 5'])
+
+    def test_a_reply_that_arrives_while_the_thread_is_read_is_shown_once(self):
+        self.add(said(ASK, ANN, 'Question'), said(at(1), BEN, 'Reply 1'))
+        self.threads[ASK].append(dict(said(at(2), ANN, 'Reply 2'), thread_ts=ASK))
+        self.assertEqual(len(self.talk()), 5)
+        self.assertEqual(self.state()['seen'], {ASK: at(2)})
+        self.messages[0].update(reply_count=2, latest_reply=at(2))
+        self.assertEqual(self.talk(), QUIET + [shown_before(1)])
+
+    def test_a_huge_thread_is_read_three_pages_marked_unknown_and_read_on_at_the_next_run(self):
         self.add(said(ASK, ANN, 'Question'), *[said(at(n), ANN, f'Reply {n}') for n in range(1, 701)])
         lines = self.talk()
         self.assertEqual(len(self.slack.made('conversations.replies')), 3)
         self.assertTrue(lines[0].startswith('[last word unknown] '), lines[0])
-        self.assertIn('    (a long thread: 600 new messages were read, not all)', lines)
-        self.assertEqual(self.talk(), QUIET + ['Shown before, last word still outside or unknown: 1 thread. '
-                                               'tickets.py --talk --all shows them again.'])
+        self.assertFalse(any('(earlier, not shown' in line for line in lines))
+        self.assertIn(f'    (a long thread: 599 new messages were read, not all. tickets.py --thread {ASK} shows more.)', lines)
+        self.assertTrue(lines[-3].endswith(': Reply 599'), lines)
+        self.assertEqual(self.state()['seen'], {ASK: at(599)})
+        self.assertEqual(self.state()['waiting'], {ASK: at(599)})
+        lines = self.talk()
+        self.assertEqual(self.slack.made('conversations.replies')[3]['oldest'], at(599))
+        self.assertTrue(lines[0].startswith('[last word outside] '), lines[0])
+        self.assertTrue(lines[-2].endswith(': Reply 700'), lines)
+        self.assertEqual(self.state()['seen'], {ASK: at(700)})
+        self.assertEqual(self.talk(), QUIET + [shown_before(1)])
 
     def test_a_message_after_an_open_unanswered_ticket_may_answer_it(self):
         self.add(ticket(T1))
@@ -390,6 +518,51 @@ class TalkTests(ConversationTestCase):
         self.assertNotIn('oldest', self.slack.made('conversations.replies')[0])
 
 
+    def test_a_user_that_is_not_visible_is_someone_and_does_not_stop_the_check(self):
+        self.refuse_lookups('user_not_visible')
+        self.add(said(ASK, ANN, 'Question'))
+        lines = self.talk()
+        self.assertTrue(lines[0].startswith('[last word unknown] '), lines[0])
+        self.assertTrue(lines[0].endswith(' | unknown: someone'), lines[0])
+
+    def test_a_remembered_time_after_the_threads_newest_message_does_not_hide_it(self):
+        self.write_json(STATE, {'seen': {ASK: f'{int(ASK.split(".")[0]) + 86400}.000000'}})
+        self.add(said(ASK, ANN, 'Question'), said(at(1), BEN, 'Answer'))
+        self.assertEqual(len(self.talk()), 4)
+        self.assertNotIn('oldest', self.slack.made('conversations.replies')[0])
+        self.assertEqual(self.state()['seen'], {ASK: at(1)})
+
+    def test_a_remembered_time_before_a_message_with_no_replies_does_not_hide_it(self):
+        self.write_json(STATE, {'seen': {ASK: '1'}})
+        self.add(said(ASK, ANN, 'Question'))
+        self.assertEqual(len(self.talk()), 3)
+        self.assertEqual(self.state()['seen'], {ASK: ASK})
+
+    def test_a_waiting_thread_that_leaves_the_window_is_counted(self):
+        too_old = f'{int(NOW) - 20 * 86400}.000100'
+        for why, waiting, line in (('one, by its start', {OLD: ASK}, 'Older than two weeks now, last word still outside or unknown: '
+                                                                    '1 thread. tickets.py --thread <ts> reads one.'),
+                                   ('two', {OLD: OLD, too_old: too_old}, 'Older than two weeks now, last word still outside or unknown: '
+                                                                         '2 threads. tickets.py --thread <ts> reads one.')):
+            with self.subTest(why=why):
+                self.reset()
+                self.write_json(STATE, {'waiting': waiting, 'seen': {ASK: ASK}})
+                self.add(said(ASK, ANN, 'Question'))
+                self.assertEqual(self.talk(), QUIET + [line])
+                self.assertEqual(self.state()['waiting'], {})
+        self.write_json(STATE, {'waiting': {OLD: OLD}, 'seen': {ASK: ASK}})
+        self.assertNotIn('Older than two weeks', '\n'.join(self.talk('--peek')))
+
+    def test_a_name_cannot_carry_fields_of_its_own(self):
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': FORGED, 'team_id': THEIRS}})
+        self.add(said(ASK, ANN, 'Question'), said(at(1), ANN, 'Again'))
+        lines = self.talk()
+        self.assertEqual(len(lines[0].split(' | ')), 4)
+        self.assertTrue(lines[0].endswith(f' | outside: {FORGED_SHOWN}'), lines[0])
+        self.assertTrue(lines[2].endswith(f' | outside: {FORGED_SHOWN}: Again'), lines[2])
+        self.assertEqual(self.state()['names'][ANN], FORGED)
+
+
 class ThreadTests(ConversationTestCase):
     def thread(self, ts=ASK):
         result = self.run_main('--thread', ts)
@@ -459,6 +632,27 @@ class ThreadTests(ConversationTestCase):
         self.add(said(ASK, ANN, 'Question'))
         self.assertIsNone(self.run_main('--thread', ASK, f'--channel={OTHER_CHANNEL}').code)
         self.assertTrue(all(payload['channel'] == OTHER_CHANNEL for payload in self.slack.made('conversations.replies')))
+
+    def test_a_user_that_is_not_visible_is_someone_and_does_not_stop_the_thread(self):
+        self.refuse_lookups('user_not_visible')
+        self.add(said(ASK, ANN, 'Question'), said(at(1), BEN, 'Answer'))
+        lines = self.thread()
+        self.assertTrue(lines[1].endswith(' | unknown: someone'), lines[1])
+        self.assertTrue(lines[3].endswith(' | unknown: someone'), lines[3])
+
+    def test_a_name_cannot_carry_fields_of_its_own(self):
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': FORGED, 'team_id': THEIRS}})
+        self.add(said(ASK, ANN, 'Question'))
+        self.assertRegex(self.thread()[1], rf'^  [A-Z][a-z]{{2}} \d\d \d\d:\d\d \| outside: {FORGED_SHOWN}$')
+
+    def test_hidden_characters_never_reach_the_output(self):
+        junk = ''.join(HIDDEN)
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': f'Ann{junk}', 'team_id': THEIRS}})
+        self.add(said(ASK, ANN, f'Question{junk} ok'), said(at(1), BEN, f'Reply{junk} ok'))
+        out = '\n'.join(self.thread())
+        for char in HIDDEN:
+            self.assertNotIn(char, out)
+        self.assertRegex(out, r'Question +ok')
 
 
 class ReplyAnyThreadTests(ConversationTestCase):
@@ -557,6 +751,27 @@ class ReplyAnyThreadTests(ConversationTestCase):
         self.assertEqual(len(self.talk()), 5)
         self.assertIsNone(self.reply('*Reply* (Jo): CSV is planned.', '--post').code)
         self.assertEqual(self.talk(), QUIET)
+
+
+    def test_a_dry_run_goes_on_when_the_user_is_not_visible(self):
+        self.refuse_lookups('user_not_visible')
+        lines = lines_of(self.reply('*Reply* (Jo): x').out)
+        self.assertRegex(lines[1], r'\| thread 2 \| unknown: someone$')
+
+    def test_a_dry_run_shows_a_name_with_no_fields_of_its_own(self):
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': FORGED, 'team_id': THEIRS}})
+        lines = lines_of(self.reply('*Reply* (Jo): x').out)
+        self.assertTrue(lines[1].endswith(f' | outside: {FORGED_SHOWN}'), lines[1])
+
+    def test_hidden_characters_in_the_message_and_the_name_never_reach_the_dry_run(self):
+        junk = ''.join(HIDDEN)
+        self.slack.respond('users.info', {'ok': True, 'user': {'real_name': f'Ann{junk}', 'team_id': THEIRS}})
+        self.reset()
+        self.add(said(ASK, ANN, f'Question{junk} ok'))
+        out = self.reply('*Reply* (Jo): x').out
+        for char in HIDDEN:
+            self.assertNotIn(char, out)
+        self.assertIn('Question ok', out)
 
 
 if __name__ == '__main__':
