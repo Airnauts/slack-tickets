@@ -118,6 +118,11 @@ class ListingTests(SlackTestCase):
                 self.assertIn('others replied;', line)
                 self.assertNotIn('NEW', line)
 
+    def test_a_remembered_time_that_is_a_number_does_not_hide_a_reply(self):
+        self.history(ticket(T1, reply_count=2, reply_users=[BOT, ANN], latest_reply='1700000500.000100'))
+        self.write_json('.slack-tickets/state.json', {'seen': {T1: 1700000600}})
+        self.assertIn('others replied, NEW since the last check;', self.listed()[1])
+
     def test_a_reply_with_nothing_remembered_is_new(self):
         self.history(ticket(T1, reply_count=2, reply_users=[BOT, ANN], latest_reply='1700000500.000100'))
         self.assertIn('NEW since the last check', self.listed()[1])
@@ -643,7 +648,9 @@ class ReplyTests(SlackTestCase):
 
     def test_a_reply_may_hold_an_emoji_with_a_variation_selector_or_a_joiner(self):
         emoji = {'a check mark with a variation selector': '\u2714\ufe0f',
-                 'two emoji joined by a joiner': '\U0001f469\u200d\U0001f467'}
+                 'two emoji joined by a joiner': '\U0001f469\u200d\U0001f467',
+                 'a keycap emoji': '1\ufe0f\u20e3',
+                 'a keycap with no selector': '#\u20e3'}
         for why, char in emoji.items():
             text = f'*Update* (Jo, today): done {char}'
             with self.subTest(why=why, flags=()):
@@ -660,9 +667,58 @@ class ReplyTests(SlackTestCase):
                 self.assertIsNone(result.code)
                 self.assertEqual(self.slack.made('chat.postMessage')[0]['text'], text)
 
+    def test_the_emoji_glue_stands_only_after_a_visible_character_that_is_not_ascii(self):
+        refused = {
+            'a joiner at the start': '\u200d done',
+            'a selector after plain text': 'done\ufe0f',
+            'a text selector after plain text': 'done\ufe0e',
+            'a joiner after a space': 'done \u200d',
+            'a joiner after a no-break space': 'done\u00a0\u200d',
+            'a joiner after an ideographic space': '\u3000\u200d',
+            'two selectors in a row': 'done \u2714\ufe0f\ufe0f',
+            'a joiner after a selector': '\u2764\ufe0f\u200d\U0001f525',
+            'two selectors before a keycap': '1\ufe0f\ufe0f\u20e3',
+            'a second selector before a keycap after an emoji': '\u2714\ufe0f\ufe0f\u20e3',
+            'a selector alone at the start': '\ufe0f done',
+            'three hundred joiners': 'Fine' + '\u200d' * 300,
+            'three hundred joiners after an emoji': '\u2714' + '\u200d' * 300,
+        }
+        for why, text in refused.items():
+            for flags in ((), ('--post',)):
+                with self.subTest(why=why, flags=flags):
+                    result = self.run_main('--reply', T1, self.note(text), *flags)
+                    self.assertEqual(result.code, 'Not posted: the reply holds characters that cannot be seen. Type it again as plain text.')
+                    self.assertEqual(self.slack.calls, [])
+
+    def test_the_invisible_letters_and_marks_that_no_category_catches_are_refused(self):
+        invisible = {'a hangul filler': '\u3164', 'a hangul choseong filler': '\u115f', 'a hangul jungseong filler': '\u1160',
+                     'a braille blank': '\u2800', 'a combining grapheme joiner': '\u034f'}
+        for why, char in invisible.items():
+            for flags in ((), ('--post',)):
+                with self.subTest(why=why, flags=flags):
+                    result = self.run_main('--reply', T1, self.note(f'Fine{char} text'), *flags)
+                    self.assertEqual(result.code, 'Not posted: the reply holds characters that cannot be seen. Type it again as plain text.')
+                    self.assertEqual(self.slack.calls, [])
+
+    def test_a_mention_or_a_label_hidden_with_the_emoji_glue_is_refused(self):
+        refused = {
+            'a broadcast split by a joiner': '@\u200dhere',
+            'a mention split by a selector': '<\ufe0f@U0000000001>',
+            'a broadcast split by a selector': '<\ufe0f!here>',
+            'a label that names nobody': '*Reply* (\u200d): x',
+            'a broadcast after a letter and a joiner': '\u00e9\u200d@here',
+        }
+        for why, text in refused.items():
+            for flags in ((), ('--post',)):
+                with self.subTest(why=why, flags=flags):
+                    result = self.run_main('--reply', T1, self.note(text), *flags)
+                    self.assertTrue(str(result.code).startswith('Not posted: '), result)
+                    self.assertEqual(self.slack.calls, [])
+
     def test_the_broadcast_words_are_found_whatever_stands_around_them(self):
-        found = ['@here', 'Hi @Here, look', '_@here_', '*@channel*', '~@everyone~', '@group', 'to @Group: hi', '_@group', 'x _@everyone_ y']
-        absent = ['ann@everyone.example', 'ann@group.example', 'ann@here', '@herex', '@@here', 'a@channel', 'at here']
+        found = ['@here', 'Hi @Here, look', '_@here_', '*@channel*', '~@everyone~', '@group', 'to @Group: hi', '_@group', 'x _@everyone_ y',
+                 '@@here', 'x @@channel']
+        absent = ['ann@everyone.example', 'ann@group.example', 'ann@here', '@herex', 'a@channel', 'at here']
         for text in found:
             with self.subTest(found=text):
                 self.assertTrue(self.tickets.BROADCAST(text))
@@ -793,6 +849,27 @@ class PostTests(SlackTestCase):
             with self.subTest(line=line):
                 found = self.tickets.problems([{'id': 'a', 'top': f'*Q: Yes?*\n{line}', 'details': 'x'}])
                 self.assertEqual(found, [])
+
+    def test_problems_refuses_a_top_that_is_not_a_ticket(self):
+        cases = {
+            'the fields on the question line': '*Q: Which?* *Asked by:* Jo',
+            'a line before the question': 'Hello\n*Q: Which?*\n*Asked by:* Jo',
+            'a question that is not bold': 'Q: Which?\nAsked by: Jo',
+        }
+        for why, text in cases.items():
+            with self.subTest(why=why):
+                found = self.tickets.problems([{'id': 'a', 'top': text, 'details': 'x'}])
+                self.assertEqual(len(found), 1, found)
+                self.assertIn('the first line must start with "*Q:"', found[0])
+                self.assertIn('"Urgency" or "Asked by" field must be on a line after it', found[0])
+
+    def test_a_batch_that_holds_no_ticket_is_not_posted(self):
+        path = self.batch([{'id': 'a', 'top': '*Q: Which?* *Asked by:* Jo', 'details': 'x'}])
+        for flags in ((), ('--post',)):
+            with self.subTest(flags=flags):
+                result = self.run_main(path, *flags)
+                self.assertTrue(result.code.startswith('Not posted:\n  a: '), result.code)
+                self.assertEqual(self.slack.calls, [])
 
     def test_problems_refuses_duplicate_or_missing_ids(self):
         good = {'top': top(), 'details': 'x'}

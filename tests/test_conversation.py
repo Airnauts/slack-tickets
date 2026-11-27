@@ -196,6 +196,21 @@ class TalkTests(ConversationTestCase):
         self.assert_header(lines[0], 'outside', ASK, 1, 'an app: someone')
         self.assertEqual(lines[1], '  Deploy finished')
 
+    def test_a_persons_reply_under_this_apps_message_that_is_not_a_ticket_is_listed(self):
+        text = '*Q: Which?* *Asked by:* Jo'
+        self.add({'ts': ASK, 'user': BOT, 'bot_id': APP, 'text': text}, said(at(1), ANN, 'Which export formats?'))
+        lines = self.talk()
+        self.assert_header(lines[0], 'outside', ASK, 1, 'this app: Tickets')
+        self.assertEqual(lines[1], '  ' + text)
+
+    def test_this_apps_message_that_is_not_a_ticket_stays_unlisted_without_a_persons_reply(self):
+        for why, later in (('no reply', []), ('only its own replies', [ours(at(1))])):
+            with self.subTest(why=why):
+                self.reset()
+                self.write_json(STATE, {})
+                self.add({'ts': ASK, 'user': BOT, 'bot_id': APP, 'text': 'Deploy note'}, *later)
+                self.assertEqual(self.talk(), QUIET)
+
     def test_a_message_by_the_person_whose_token_it_is_is_still_listed_when_someone_replies(self):
         self.slack.respond('auth.test', {'ok': True, 'user_id': BEN, 'team_id': OURS})
         self.add(said(ASK, BEN, 'Which formats?'), said(at(1), ANN, 'XLSX and CSV.'))
@@ -262,6 +277,34 @@ class TalkTests(ConversationTestCase):
         self.assertEqual(len(lines), 5)
         self.assertEqual(self.state()['seen'][ASK], at(2))
         self.assertEqual(self.state()['waiting'], {ASK: at(2)})
+
+    def test_a_thread_we_answered_after_a_client_wrote_again_shows_what_was_missed(self):
+        self.add(said(ASK, ANN, 'Which?'))
+        self.talk()
+        self.reset()
+        self.add(said(ASK, ANN, 'Which?'), said(at(1), ANN, 'Any news?'), ours(at(2)))
+        lines = self.talk()
+        self.assert_header(lines[0], 'this app', ASK, 2, 'outside: Ann Client')
+        self.assertRegex(lines[2], r'^    .* \| outside: Ann Client: Any news\?$')
+        self.assertRegex(lines[3], r'^    .* \| this app: Tickets: ')
+        self.assertEqual(lines[4:], ['Last word outside or unknown: 0 of 1 thread shown.'])
+        self.assertNotIn(ASK, self.state()['waiting'])
+        self.assertEqual(self.state()['seen'], {ASK: at(2)})
+        self.assertEqual(self.talk(), QUIET)
+
+    def test_a_thread_never_shown_stays_quiet_when_we_have_the_last_word(self):
+        self.add(said(ASK, ANN, 'Which?'), said(at(1), ANN, 'Any news?'), ours(at(2)))
+        self.assertEqual(self.talk(), QUIET)
+
+    def test_a_number_or_true_in_the_state_does_not_stop_the_check(self):
+        for value in (1700003000, True):
+            with self.subTest(value=value):
+                self.reset()
+                self.write_json(STATE, {'seen': {ASK: value}})
+                self.add(said(ASK, ANN, 'Which?'), said(at(1), BEN, 'XLSX only.'))
+                self.assert_header(self.talk()[0], 'inside', ASK, 1, 'outside: Ann Client')
+                self.assertIsNone(self.run_main('--answers').code)
+                self.assertIsNone(self.run_main('--list').code)
 
     def test_our_own_reply_is_not_news(self):
         self.add(said(ASK, ANN, 'Which export formats?'))
@@ -538,12 +581,11 @@ class TalkTests(ConversationTestCase):
         self.assertEqual(len(self.talk()), 3)
         self.assertEqual(self.state()['seen'], {ASK: ASK})
 
-    def test_a_waiting_thread_that_leaves_the_window_is_counted(self):
+    def test_a_waiting_thread_that_leaves_the_window_is_counted_and_named(self):
         too_old = f'{int(NOW) - 20 * 86400}.000100'
-        for why, waiting, line in (('one, by its start', {OLD: ASK}, 'Older than two weeks now, last word still outside or unknown: '
-                                                                    '1 thread. tickets.py --thread <ts> reads one.'),
-                                   ('two', {OLD: OLD, too_old: too_old}, 'Older than two weeks now, last word still outside or unknown: '
-                                                                         '2 threads. tickets.py --thread <ts> reads one.')):
+        footer = 'Older than two weeks now, last word still outside or unknown: {}. tickets.py --thread <ts> reads one. Their ts: {}'
+        for why, waiting, line in (('one, by its start', {OLD: ASK}, footer.format('1 thread', OLD)),
+                                   ('two', {OLD: OLD, too_old: too_old}, footer.format('2 threads', f'{OLD} {too_old}'))):
             with self.subTest(why=why):
                 self.reset()
                 self.write_json(STATE, {'waiting': waiting, 'seen': {ASK: ASK}})
@@ -552,6 +594,16 @@ class TalkTests(ConversationTestCase):
                 self.assertEqual(self.state()['waiting'], {})
         self.write_json(STATE, {'waiting': {OLD: OLD}, 'seen': {ASK: ASK}})
         self.assertNotIn('Older than two weeks', '\n'.join(self.talk('--peek')))
+
+    def test_the_footer_for_threads_that_left_the_window_names_ten_at_most_and_only_real_timestamps(self):
+        olds = [f'{int(NOW) - 20 * 86400 - n}.000100' for n in range(12)]
+        self.write_json(STATE, {'waiting': {'abc': OLD, **{ts: ts for ts in olds}}, 'seen': {ASK: ASK}})
+        self.add(said(ASK, ANN, 'Question'))
+        self.assertEqual(self.talk(), QUIET + ['Older than two weeks now, last word still outside or unknown: 13 threads. '
+                                               'tickets.py --thread <ts> reads one. Their ts: ' + ' '.join(olds[:10])])
+        self.write_json(STATE, {'waiting': {'abc': OLD}, 'seen': {ASK: ASK}})
+        self.assertEqual(self.talk(), QUIET + ['Older than two weeks now, last word still outside or unknown: 1 thread. '
+                                               'tickets.py --thread <ts> reads one.'])
 
     def test_a_name_cannot_carry_fields_of_its_own(self):
         self.slack.respond('users.info', {'ok': True, 'user': {'real_name': FORGED, 'team_id': THEIRS}})
@@ -785,8 +837,18 @@ class ReplyAnyThreadTests(ConversationTestCase):
 
     def test_nothing_is_posted_when_a_lookup_for_the_target_fails(self):
         self.refuse_lookups('missing_scope')
-        self.assertEqual(self.reply('*Reply* (Jo): x', '--post').code, 'users.info: missing_scope')
+        result = self.reply('*Reply* (Jo): x', '--post')
+        self.assertEqual(result.code, 'Not posted: users.info: missing_scope')
+        self.assertEqual(result.out, '')
         self.assertNotIn('chat.postMessage', self.slack.methods())
+
+    def test_a_post_that_fails_prints_no_line_about_the_target(self):
+        def refuse(**payload):
+            raise SystemExit('chat.postMessage: ratelimited')
+        self.slack.respond('chat.postMessage', refuse)
+        result = self.reply('*Reply* (Jo): x', '--post')
+        self.assertEqual(result.code, 'chat.postMessage: ratelimited')
+        self.assertEqual(result.out, '')
 
     def test_a_reply_with_crlf_line_ends_is_posted_with_newlines(self):
         self.assertIsNone(self.reply('*Reply* (Jo): one\r\ntwo\r\n', '--post').code)

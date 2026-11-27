@@ -63,7 +63,7 @@ THREAD_PAGES = 10
 THIS_APP, INSIDE, OUTSIDE, UNKNOWN, AN_APP = 'this app', 'inside', 'outside', 'unknown', 'an app'
 LABEL = re.compile(r'\*[^*\n]+\* \([^()\n]*[^\s()][^()\n]*\):').match
 # An underscore may stand beside the word (_@here_ is italic), a letter or digit before it makes an address.
-BROADCAST = re.compile(r'(?<![^\W_]|@)@(channel|here|everyone|group)(?![^\W_])', re.I).search
+BROADCAST = re.compile(r'(?<![^\W_])@(channel|here|everyone|group)(?![^\W_])', re.I).search
 LINK = re.compile(r'<([a-z][a-z0-9+.-]*:[^|>\s]*)(?:\|[^>]*)?>|(https?://[^\s<>|]+)', re.I).finditer
 FLAGS = frozenset(('--list', '--answers', '--all', '--peek', '--talk', '--thread', '--reply', '--close', '--post', '--check', '--setup',
                    '--sources', '--sources-template'))
@@ -72,6 +72,7 @@ LINE_BREAKS = re.compile(r'[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]')
 # Not Cn (unassigned): an old Python's tables would take a new emoji for one.
 HIDDEN_CATEGORIES = frozenset(('Cf', 'Cc', 'Cs', 'Co'))
 EMOJI_GLUE = {0xfe0e: None, 0xfe0f: None, 0x200d: None}  # what an emoji in a reply may hold; clean() still blanks them
+INVISIBLE = re.compile('[\u3164\u115f\u1160\u2800\u034f]').search  # draw nothing, and no category rule catches them
 TIMESTAMP = re.compile(r'[0-9]{10}\.[0-9]{6}').fullmatch
 CHANNEL_ID = re.compile(r'[CG][A-Z0-9]{6,}').fullmatch
 # The skill's own folder. realpath, so a symlinked script or skill folder still finds the files beside it.
@@ -221,6 +222,19 @@ def clean(text):
     return ''.join(' ' if hidden(char) else char for char in LINE_BREAKS.sub('\n', text))
 
 
+def glue_placed(text):
+    """True when each EMOJI_GLUE character directly follows a visible non-ASCII character, never another of them. U+FE0F
+    may also stand before U+20E3, which ends a keycap emoji."""
+    for number, char in enumerate(text):
+        if ord(char) in EMOJI_GLUE:
+            before = text[number - 1:number]
+            keycap = char == '\ufe0f' and text[number + 1:number + 2] == '\u20e3'
+            visible = before > '\x7f' and not before.isspace() and not hidden(before)
+            if (before and ord(before) in EMOJI_GLUE) or not (visible or keycap):
+                return False
+    return True
+
+
 def one_line(text):
     return ' '.join(clean(text).split())
 
@@ -297,7 +311,8 @@ def believable(last):
 def read_state(path):
     """The believable part of one state file. Raises on a file that is oddly shaped or unreadable."""
     state = {} if linked(path) or not os.path.lexists(path) or tracked(path) else load(path)
-    times = {key: {ts: last for ts, last in state.get(key, {}).items() if believable(last)} for key in ('seen', 'hinted', 'waiting')}
+    times = {key: {ts: last for ts, last in state.get(key, {}).items() if isinstance(last, str) and believable(last)}
+             for key in ('seen', 'hinted', 'waiting')}
     names = {user: one_line(str(name)) for user, name in state.get('names', {}).items()}
     found = state.get('oldest_open')
     bounds = {channel: last if isinstance(last, str) and TIMESTAMP(last) and believable(last) else ''
@@ -382,6 +397,8 @@ def problems(tickets):
             found.append(f'{t.get("id")}: nobody is mentioned in a ticket; a reviewer tags in the thread')
         if not re.search(r'Asked by:\*? *[^\s*]', top):
             found.append(f'{t.get("id")}: the top-level message says who asked ("Asked by: <name>")')
+        if not is_ticket({'text': top}):
+            found.append(f'{t.get("id")}: the first line must start with "*Q:", and the "Urgency" or "Asked by" field must be on a line after it')
         if len(top) > 3500 or len(details) > 3500:
             found.append(f'{t.get("id")}: too long for one message')
     return found
@@ -671,10 +688,11 @@ def reply(ts, path, flags):
     with open(path, encoding='utf-8', newline='') as source:  # a lone carriage return is not turned into a newline here
         text = source.read().replace('\r\n', '\n')
     plain = text.translate(EMOJI_GLUE)
-    if clean(plain) != plain:
+    if clean(plain) != plain or INVISIBLE(text) or not glue_placed(text):
         sys.exit('Not posted: the reply holds characters that cannot be seen. Type it again as plain text.')
     text = text.strip()
-    if not text or '<@' in text or '<!' in text or BROADCAST(text) or len(text) > 3500:
+    bare = text.translate(EMOJI_GLUE)
+    if not text or len(text) > 3500 or any('<@' in t or '<!' in t or BROADCAST(t) for t in (text, bare)):
         sys.exit('Not posted: a reply needs some text, mentions nobody and fits one message.')
     if not TIMESTAMP(ts):
         sys.exit("Not posted: the first argument is the thread's timestamp, as printed by --answers or --talk (like 1700000000.000100).")
@@ -690,20 +708,22 @@ def reply(ts, path, flags):
         top, why = top_level_at(ts, tok, channel)
         if not top:
             sys.exit(f'Not posted: {why}')
-        if not is_ticket(top) and not LABEL(text):
+        if not is_ticket(top) and not LABEL(bare):
             sys.exit('Not posted: a reply outside a ticket\'s thread goes out under the app\'s name, so it starts with a bold '
                      'label and the name it speaks for, like "*Reply* (Jo Tester): ".')
     dry = '--post' not in flags
-    if dry:
-        print(f'--- reply in the thread of {ts}')
+    target = ''
     if top:
         people = People(tok, recall()['names'], us(tok))
-        print(f'It starts with: {when(ts)} | {"a ticket" if is_ticket(top) else "not a ticket"} | '
-              f'thread {thread_size(top, 0)} | {people.who(top)}')
-        print('  ' + cut(one_line(people.plain(top.get('text'), look_up=False)), HINT_LENGTH))
-    elif dry:
-        print('Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.')
+        try:  # the lookups for the name come before the post, and the lines are printed only once it succeeded
+            target = (f'It starts with: {when(ts)} | {"a ticket" if is_ticket(top) else "not a ticket"} | '
+                      f'thread {thread_size(top, 0)} | {people.who(top)}\n  '
+                      + cut(one_line(people.plain(top.get('text'), look_up=False)), HINT_LENGTH))
+        except SystemExit as stop:
+            sys.exit(stop.code if dry else f'Not posted: {stop.code}')
     if dry:
+        print(f'--- reply in the thread of {ts}')
+        print(target or 'Not read without a token: the message the thread starts with. Whether it is a ticket was not checked.')
         print(f'--- the reply\n{text}')
         links = list(dict.fromkeys(found.group(1) or found.group(2) for found in LINK(text)))
         if links:
@@ -711,7 +731,7 @@ def reply(ts, path, flags):
         print(f'\nDry run for {channel}, nothing posted. Add --post to post.')
         return
     sent = call('chat.postMessage', tok, channel=channel, thread_ts=ts, text=text, unfurl_links=False, unfurl_media=False)
-    print(f'Replied in the thread of {ts} ({sent["ts"]}).')
+    print(f'{target}\nReplied in the thread of {ts} ({sent["ts"]}).')
 
 
 def same_author(one, other):
@@ -888,7 +908,7 @@ def talk(flags):
 
     threads = [m for m in messages if float(m['ts']) >= cutoff and not is_ticket(m)  # also when Slack sent older ones
                and m.get('subtype') in (None, 'file_share', 'bot_message') and (m.get('user') or m.get('bot_id'))
-               and not (m.get('bot_id') and people.ours(m))]  # this app's own messages, not those of the person whose token it is
+               and not (m.get('bot_id') and people.ours(m) and not m.get('reply_count'))]  # this app's own message: once someone replies in it
     news = sorted((m for m in threads if float(newest(m)) > float(shown_to(m))), key=lambda m: float(newest(m)), reverse=show_all)
     blocks, left, reads = [], 0, 0
     for top in news:
@@ -906,7 +926,8 @@ def talk(flags):
         later = [r for r in thread if r.get('ts') != top['ts'] and float(r['ts']) > float(last_seen)]
         read_to = max((r['ts'] for r in later), key=float, default=top['ts'])
         upto = read_to if more else max(newest(top), read_to, key=float)  # a reply that came after the channel was read counts
-        ended = not show_all and not more and bool(later) and people.side(later[-1]) == THIS_APP
+        ended = (not show_all and not more and bool(later) and people.side(later[-1]) == THIS_APP
+                 and not (last_seen != '0' and any(people.person(m) for m in later)))  # a person wrote since it was shown
         if ended or not any(people.person(m) for m in [top] + later) or (not later and float(top['ts']) <= float(last_seen)):
             settle(top, upto, ended)
             continue
@@ -960,7 +981,9 @@ def talk(flags):
         for ts in gone:
             del waiting[ts]
         if gone:
-            print(f'Older than two weeks now, last word still outside or unknown: {count(len(gone), "thread")}. tickets.py --thread <ts> reads one.')
+            named = [ts for ts in gone if TIMESTAMP(ts)][:10]
+            print(f'Older than two weeks now, last word still outside or unknown: {count(len(gone), "thread")}. tickets.py --thread <ts> reads one.'
+                  + (f' Their ts: {" ".join(named)}' if named else ''))
     remember(state)
 
 

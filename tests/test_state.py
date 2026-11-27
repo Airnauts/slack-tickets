@@ -446,6 +446,14 @@ class StateContentTests(StateTestCase):
         self.put(json.dumps({'waiting': {'1.0': '2.000002', '3.0': 'inf', '4.0': None}}))
         self.assertEqual(self.tickets.recall()['waiting'], {'1.0': '2.000002'})
 
+    def test_a_remembered_time_that_is_not_a_string_is_dropped(self):
+        self.project('numbers')
+        for key in ('seen', 'hinted', 'waiting'):
+            for value in (1700003000, 1700003000.5, True):
+                with self.subTest(key=key, value=value):
+                    self.put(json.dumps({key: {'1.0': value, '2.0': '3.000003'}}))
+                    self.assertEqual(self.tickets.recall()[key], {'2.0': '3.000003'})
+
     def test_an_odd_bound_means_a_full_read_of_its_channel(self):
         self.project('bound')
         for odd in ('abc', '1700000000', 1700000000.5, '99999999999.000000', '', None):
