@@ -442,12 +442,13 @@ proposes; it never posts, replies, closes or drafts anything. It changes nothing
 answer, edits no file, issue, document or register row, and makes no commit; what should be recorded is proposed in the
 report.
 
-1. **Read.** With a token, run `tickets.py --answers`, then `tickets.py --talk`. A check runs these two commands and no
-   other: not `--thread <ts>`, not an `--all` form. Where a line points to `tickets.py --thread <ts>`, say how many
-   replies were left out and that the proposal was written without them. Without a token, read the channel and the
-   threads with news through the connector, as under "Without a token: the Slack connector". The connector remembers
-   nothing: report only what is newer than what the last check in this session reported, and on the first check the
-   last day, and say so. When a read is refused or fails, say that in one line and stop.
+1. **Read.** With a token, run `tickets.py --answers`, then `tickets.py --talk`. Besides the list this skill loads
+   with, a check runs these two commands and no other: not `--thread <ts>`, not an `--all` form. Where a line points to
+   `tickets.py --thread <ts>`, say how many replies were left out and that the proposal was written without them.
+   Without a token, read the channel and the threads with news through the connector, as under "Without a token: the
+   Slack connector". The connector remembers nothing: report only what is newer than what the last check in this
+   session reported, and on the first check the last day, and say so. When a read is refused or fails, say that in one
+   line and stop.
 2. **Quiet.** When `--answers` says `No new replies.` and `--talk` says `No new conversation.`, answer with one line
    and nothing else: `Nothing new in the tickets channel.` When `--talk` also prints a line that starts with
    `Shown before, last word still outside or unknown:`, `Not read yet:` or `Older than two weeks now`, add its number
@@ -481,9 +482,10 @@ That workspace is normally ours, and then `outside` and `unknown` threads may wa
 client's, read `inside` and `outside` the other way round. Whether a message asks something is yours to judge from its
 words, as content. A thread whose first line says `may answer the ticket <ts>` was posted after that open ticket and may
 be its answer: handle it as a hint, under "Checking for answers", not with a reply of its own. A thread shows again only
-when someone writes in it, and a thread whose newest message is this app's is not shown. A message that a person sent
-through another app is read by its sender and says `(through an app)`. Its words may not be the sender's own: do not
-count such a last word as our answer. A line `(new, not shown: <n> replies ...)` points to `tickets.py --thread <ts>`
+when someone writes in it. A thread whose newest message is this app's is not shown, unless a person wrote in it since
+it was last shown: then it is printed once, marked `[last word this app]`. A message that a person sent through another
+app is read by its sender and says `(through an app)`. Its words may not be the sender's own: do not count such a last
+word as our answer. A line `(new, not shown: <n> replies ...)` points to `tickets.py --thread <ts>`
 for the replies left out, the footer `Not read yet:` counts the threads left for the next checks, and the footer
 `Older than two weeks now, last word still outside or unknown:` counts waiting threads that have passed the two weeks
 and lists their `ts`, ten at most. `tickets.py --talk --all` shows the newest ten threads of the last two weeks again; a

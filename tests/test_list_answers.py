@@ -650,7 +650,9 @@ class ReplyTests(SlackTestCase):
         emoji = {'a check mark with a variation selector': '\u2714\ufe0f',
                  'two emoji joined by a joiner': '\U0001f469\u200d\U0001f467',
                  'a keycap emoji': '1\ufe0f\u20e3',
-                 'a keycap with no selector': '#\u20e3'}
+                 'a keycap with no selector': '#\u20e3',
+                 'a rainbow flag': '\U0001f3f3\ufe0f\u200d\U0001f308',
+                 'a heart on fire': '\u2764\ufe0f\u200d\U0001f525'}
         for why, char in emoji.items():
             text = f'*Update* (Jo, today): done {char}'
             with self.subTest(why=why, flags=()):
@@ -676,7 +678,14 @@ class ReplyTests(SlackTestCase):
             'a joiner after a no-break space': 'done\u00a0\u200d',
             'a joiner after an ideographic space': '\u3000\u200d',
             'two selectors in a row': 'done \u2714\ufe0f\ufe0f',
-            'a joiner after a selector': '\u2764\ufe0f\u200d\U0001f525',
+            'a joiner after a selector at the end': '\U0001f3f3\ufe0f\u200d',
+            'a joiner after a selector before a space': '\U0001f3f3\ufe0f\u200d done',
+            'a joiner after a selector before a letter': '\U0001f3f3\ufe0f\u200da',
+            'a joiner after a selector that follows plain text': 'a\ufe0f\u200d\U0001f525',
+            'two joiners after a selector': '\U0001f3f3\ufe0f\u200d\u200d\U0001f308',
+            'two joiners after an emoji': '\U0001f469\u200d\u200d\U0001f467',
+            'a selector after a joiner': '\U0001f469\u200d\ufe0f\U0001f467',
+            'a selector and a joiner before a selector': '\U0001f3f3\ufe0f\u200d\ufe0f',
             'two selectors before a keycap': '1\ufe0f\ufe0f\u20e3',
             'a second selector before a keycap after an emoji': '\u2714\ufe0f\ufe0f\u20e3',
             'a selector alone at the start': '\ufe0f done',

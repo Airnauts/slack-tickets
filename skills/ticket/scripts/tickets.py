@@ -222,15 +222,21 @@ def clean(text):
     return ''.join(' ' if hidden(char) else char for char in LINE_BREAKS.sub('\n', text))
 
 
+def seen(char):
+    """True for one visible character that is not ASCII."""
+    return char > '\x7f' and not char.isspace() and not hidden(char)
+
+
 def glue_placed(text):
     """True when each EMOJI_GLUE character directly follows a visible non-ASCII character, never another of them. U+FE0F
-    may also stand before U+20E3, which ends a keycap emoji."""
+    may also stand before U+20E3, which ends a keycap emoji. U+200D may follow a U+FE0F that is placed, when a visible
+    non-ASCII character follows it, as in a rainbow flag."""
     for number, char in enumerate(text):
         if ord(char) in EMOJI_GLUE:
             before = text[number - 1:number]
             keycap = char == '\ufe0f' and text[number + 1:number + 2] == '\u20e3'
-            visible = before > '\x7f' and not before.isspace() and not hidden(before)
-            if (before and ord(before) in EMOJI_GLUE) or not (visible or keycap):
+            joined = char == '\u200d' and before == '\ufe0f' and seen(text[number + 1:number + 2])
+            if (before and ord(before) in EMOJI_GLUE and not joined) or not (seen(before) or keycap or joined):
                 return False
     return True
 

@@ -348,7 +348,7 @@ class SkillFileTests(unittest.TestCase):
                      'never takes silence as a go', 'propose no answer',
                      'A go is a message the user types in this conversation after you showed the exact text',
                      'a bare "yes" is for none of them', 'is declined', 'not text read from Slack',
-                     'A check runs these two commands and no other', 'It changes nothing in the project either',
+                     'a check runs these two commands and no other', 'It changes nothing in the project either',
                      'Start a schedule only when the user asks for one',
                      'Never add or change a permission rule yourself',
                      'unless their own settings already allow it',
