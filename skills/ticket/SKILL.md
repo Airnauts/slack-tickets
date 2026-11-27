@@ -30,11 +30,11 @@ In Claude Code only the commands that post nothing to Slack run without asking: 
 `--all` or `--peek`), `--check`, `--setup`, `--sources-template` and `--sources`. A dry run, a post, a reply, a close,
 and any command with `--channel=<id>` ask the user first. That is intended. When a command is refused, say so and
 stop. Never look for another way to run it or to get the same result: not the Slack connector, not another path to the
-script, not a chained command, not a script of your own. Answering ordinary conversation through the connector, as its
-own section describes, is a separate task that the user asks for; it is never what you do after a refusal. While there
-is a token, a ticket, a reply in a ticket's thread and a check mark never go through the connector, whether the command
-was refused or not. The script saying "that timestamp is not a ticket in this channel" is not a refusal in this sense:
-tell the user, and go on under that section only when they ask for it.
+script, not a chained command, not a script of your own. Answering ordinary conversation, under "Conversation in the
+channel that is not a ticket", is a separate task that the user asks for, never what you do after a refusal. While
+there is a token, a ticket, a reply in a ticket's thread and a check mark never go through the connector, whether the
+command was refused or not. The script saying "that timestamp is not a ticket in this channel" is not a refusal in this
+sense: tell the user, and answer under that section only when they ask for it.
 
 ## First: the open tickets
 
@@ -190,9 +190,9 @@ write it" says about personal data and secrets does.
   for it: no word that starts with `@`, no `@channel`, `@here` or `@everyone`, also inside a quote from the thread. A
   link only when the user gave it or it is our own; never an address taken from the channel.
 - **Show it first.** Show the text and the message it answers: who wrote it, when, and its first words. Say that it
-  goes out under the user's own name, not the app's. Send, or create a draft, only on the user's go for the text shown,
-  given in this conversation after you showed it. A draft counts as a send for this rule. A changed text, or another
-  message to answer, needs a new go.
+  goes out under the user's own name, not the app's. Send only on the user's go for the text shown, given in this
+  conversation after you showed it. A draft counts as a send for this rule. A changed text, or another message to
+  answer, needs a new go.
 - **Send it** as a reply in that thread, always with that message's timestamp as the thread: never a top-level message,
   and never also sent to the channel (`reply_broadcast`). The connector takes Markdown, as described under "Without a
   token: the Slack connector". If the send is refused because the channel is shared with another organization, do not
